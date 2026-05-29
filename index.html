@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ProperCare Manager · Gestão PGP v3.12</title>
+<title>ProperCare Manager · Gestão PGP v3.14</title>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <style>
@@ -467,7 +467,7 @@ tr:hover td{background:var(--gray-50)}
       <div class="login-logo-mark">PC</div>
       <div class="login-logo-text">Proper Compressores</div>
     </div>
-    <div class="login-sub">ProperCare Manager · v3.12 — Acesso restrito</div>
+    <div class="login-sub">ProperCare Manager · v3.14 — Acesso restrito</div>
     <label class="login-label">Senha de acesso</label>
     <input class="login-input" type="password" id="loginInput" placeholder="••••••"
            maxlength="20" onkeydown="if(event.key==='Enter')loginEntrar()">
@@ -481,7 +481,7 @@ tr:hover td{background:var(--gray-50)}
     <div class="logo-mark">PC</div>
     <div class="logo-text">Proper Compressores</div>
     <div class="logo-sep"></div>
-    <div class="logo-sub">PCM v3.13</div>
+    <div class="logo-sub">PCM v3.14</div>
   </div>
   <nav class="header-nav">
     <button class="nav-btn active" onclick="showView('dashboard')" id="navDashboard">Dashboard</button>
@@ -1599,6 +1599,30 @@ function isSuspectClientTerm(v) {
   if (normalizeTextKey(s).replace(/[^a-z]/g, '').length < 2) return true;
   return false;
 }
+// ── MATCHING ROBUSTO v3.12 ────────────────────────────────────────────────
+// Dois clientes são o mesmo se clientKey(nome) coincidir OU CNPJ numérico coincidir
+function sameClient(nomeA, cnpjA, nomeB, cnpjB) {
+  const ckA = clientKey(String(nomeA||''));
+  const ckB = clientKey(String(nomeB||''));
+  if(ckA && ckB && ckA === ckB) return true;
+  const cn = v => String(v||'').replace(/\D/g,'');
+  const cA = cn(cnpjA), cB = cn(cnpjB);
+  if(cA.length >= 11 && cB.length >= 11 && cA === cB) return true;
+  return false;
+}
+// Duas máquinas são a mesma se série (ou tag) coincidir E marca+modelo forem compatíveis
+function sameMachine(rBrand,rModel,rSerial,rTag,iBrand,iModel,iSerial,iTag){
+  const ck = v => compactKey(String(v||''));
+  const hasSer = ck(rSerial) && ck(iSerial);
+  const hasTag = ck(rTag)    && ck(iTag);
+  if(!hasSer && !hasTag) return false;
+  const serMatch = hasSer && ck(rSerial)===ck(iSerial);
+  const tagMatch = hasTag && ck(rTag)===ck(iTag);
+  if(!serMatch && !tagMatch) return false;
+  const brandOk = !ck(rBrand)||!ck(iBrand)||ck(rBrand)===ck(iBrand);
+  const modelOk = !ck(rModel)||!ck(iModel)||ck(rModel)===ck(iModel);
+  return brandOk && modelOk;
+}
 // ──────────────────────────────────────────────────────────────────────────
 
 // ── MACHINE KEY — mesmo algoritmo do campo ────────────────────────────────
@@ -1623,15 +1647,29 @@ function findMachineByKey(mkId, client, brand, model, serial, tag){
   const mk = machineKey(client, brand, model, serial);
   const byMk = db.machines.find(m => String(m.id||'').trim() === mk);
   if(byMk) return byMk;
-  // 3. v3.11: usar clientKey para match robusto (grafia variante)
-  const ck = clientKey(client);
-  const ser = normKey(serial);
-  if(ser && ck){ const bySer = db.machines.find(m => clientKey(m.client||'')===ck && normKey(m.serial)===ser); if(bySer) return bySer; }
-  const tg = normKey(tag);
-  if(tg && ck){ const byTag = db.machines.find(m => clientKey(m.client||'')===ck && normKey(m.tag)===tg); if(byTag) return byTag; }
-  // 4. v3.11: fallback por série única (independente de cliente)
-  if(ser){
-    const bySerial = db.machines.filter(m => normKey(m.serial||'')===ser);
+  // 3. v3.12: match robusto por marca+modelo+série (requer os três)
+  const ck = compactKey(serial);
+  const tk = compactKey(tag);
+  const bk = compactKey(brand);
+  const dk = compactKey(model);
+  if((ck||tk) && (bk||dk)){
+    const robust = db.machines.find(m => {
+      const mSer = compactKey(m.serial||'');
+      const mTag = compactKey(m.tag||'');
+      const mBrd = compactKey(m.brand||'');
+      const mMod = compactKey(m.model||'');
+      const serMatch = ck && mSer && ck === mSer;
+      const tagMatch = tk && mTag && tk === mTag;
+      if(!serMatch && !tagMatch) return false;
+      const brandOk = !bk || !mBrd || bk === mBrd;
+      const modelOk = !dk || !mMod || dk === mMod;
+      return brandOk && modelOk;
+    });
+    if(robust) return robust;
+  }
+  // 4. v3.12: fallback por série única (independente de cliente) — só se única
+  if(ck){
+    const bySerial = db.machines.filter(m => compactKey(m.serial||'')===ck);
     if(bySerial.length === 1) return bySerial[0];
   }
   return null;
@@ -5015,11 +5053,12 @@ async function syncFromGS({ silent = false } = {}){
     sheetClients.forEach(sc => {
       const scId   = String(sc.ID   || sc.id   || '').trim();
       const scNome = String(sc.Nome || sc.nome || '').trim();
+      const scCnpj = String(sc.CNPJ || sc.cnpj || '').trim();
       if (!scId && !scNome) return;
-      // v3.11: usar clientKey para match robusto de clientes
+      // v3.12: usar sameClient (nome canônico OU CNPJ) para match robusto
       const existing = db.clients.find(c =>
         (scId && c.id === scId) ||
-        (scNome && clientKey(c.nome) === clientKey(scNome))
+        sameClient(c.nome, c.cnpj, scNome, scCnpj)
       );
       if (existing) {
         if (!existing.cnpj     && sc.CNPJ)     existing.cnpj     = sc.CNPJ;
