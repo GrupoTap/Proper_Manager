@@ -888,6 +888,10 @@ tr:hover td{background:var(--gray-50)}
       <label class="form-label">Observações da máquina <span>opcional</span></label>
       <textarea class="form-textarea" id="mcObs" placeholder="Histórico relevante, peculiaridades, alarmes recorrentes..."></textarea>
     </div>
+    <div class="form-group">
+      <label class="form-label">Observações operacionais (campo) <span>opcional</span></label>
+      <textarea class="form-textarea" id="mcObsOp" placeholder="Alarmes, falhas recentes, queixas do operador — coletado pelo técnico em campo..."></textarea>
+    </div>
     <!-- Duplicate alert for machines -->
     <div class="dup-alert" id="dupMachineAlert">
       <div class="dup-alert-title">⚠ Máquinas com modelo similar encontradas:</div>
@@ -3449,10 +3453,10 @@ function openModalMachine(id=null){
   document.getElementById('modalMachineTitle').textContent=id?'Editar máquina':'Nova máquina (PGP)';
   document.getElementById('dupMachineAlert').classList.remove('show');
   document.getElementById('mcModelMatchAlert').style.display='none';
-  const fields=['mcClient','mcBranch','mcCnpj','mcContact','mcPhone','mcEmail','mcCity','mcBrand','mcModel','mcSerial','mcTag','mcLocation','mcPower','mcObs','mcDriveLink'];
+  const fields=['mcClient','mcBranch','mcCnpj','mcContact','mcPhone','mcEmail','mcCity','mcBrand','mcModel','mcSerial','mcTag','mcLocation','mcPower','mcObs','mcObsOp','mcDriveLink'];
   if(id){
     const eq=db.machines.find(m=>m.id===id);
-    const map={mcClient:'client',mcBranch:'branch',mcCnpj:'cnpj',mcContact:'contact',mcPhone:'phone',mcEmail:'email',mcCity:'city',mcBrand:'brand',mcModel:'model',mcSerial:'serial',mcTag:'tag',mcLocation:'location',mcPower:'power',mcObs:'obs',mcDriveLink:'driveLink'};
+    const map={mcClient:'client',mcBranch:'branch',mcCnpj:'cnpj',mcContact:'contact',mcPhone:'phone',mcEmail:'email',mcCity:'city',mcBrand:'brand',mcModel:'model',mcSerial:'serial',mcTag:'tag',mcLocation:'location',mcPower:'power',mcObs:'obs',mcObsOp:'obsOp',mcDriveLink:'driveLink'};
     Object.entries(map).forEach(([k,v])=>{const el=document.getElementById(k);if(el)el.value=eq[v]||''});
     // Se o nome do cliente gravado não é o canônico, corrigir exibição e preencher dados do cliente
     if(db.clients){
@@ -3507,6 +3511,7 @@ function saveMachine(){
     hourTotal:parseInt(document.getElementById('mcHour').value)||0,
     hpw:parseInt(document.getElementById('mcHpw').value)||0,
     obs:document.getElementById('mcObs').value.trim(),
+    obsOp:document.getElementById('mcObsOp').value.trim(),
     driveLink:document.getElementById('mcDriveLink').value.trim(),
     lastVisit:document.getElementById('mcLastVisit').value,
     nextVisit:document.getElementById('mcNextVisit').value,
@@ -5108,6 +5113,10 @@ async function syncFromGS({ silent = false } = {}){
         eq.year     = sm.year || sm['Ano'] || eq.year || '';
         eq.location = sm.location || sm['Localização'] || eq.location || '';
         eq.obs      = sm.obs || sm['Observações'] || eq.obs || '';
+        // v1.9: novos campos de MAQUINAS
+        if(sm.power    || sm['Potência'])   eq.power   = sm.power    || sm['Potência']   || eq.power   || '';
+        if(sm.type     || sm['Tipo_Equip']) eq.type    = sm.type     || sm['Tipo_Equip'] || eq.type    || '';
+        if(sm.obsOp    || sm['Obs_Op'])     eq.obsOp   = sm.obsOp    || sm['Obs_Op']     || eq.obsOp   || '';
         eq.hpw      = parseInt(sm.hpw || sm['h/Semana']) || eq.hpw || 0;
         if(sm.parts && typeof sm.parts === 'object'){
           if(!eq.parts) eq.parts = {};
@@ -5140,6 +5149,10 @@ async function syncFromGS({ silent = false } = {}){
           photos:[],
           parts: sm.parts || {},
           cnpj:'', contact:'', phone:'', email:'', city:'',
+          // v1.9:
+          power: sm.power || sm['Potência'] || '',
+          type:  sm.type  || sm['Tipo_Equip'] || '',
+          obsOp: sm.obsOp || sm['Obs_Op'] || '',
         });
         newMachines++;
         if(sm.parts && typeof sm.parts === 'object'){
@@ -5184,6 +5197,11 @@ async function syncFromGS({ silent = false } = {}){
             photos:[],
             parts:{},
             cnpj:'', contact:'', phone:'', email:'', city:'',
+            // v1.9:
+            phone:  v.phone  || '',
+            email:  v.email  || '',
+            city:   v.city   || '',
+            obsOp:  v.obsOp  || '',
           };
           db.machines.push(eq);
           newMachines++;
@@ -5205,6 +5223,11 @@ async function syncFromGS({ silent = false } = {}){
         if(v.nextVisit && !eq.nextVisit){ eq.nextVisit = v.nextVisit; touched = true; }
         if(v.contact   && !eq.contact)  { eq.contact   = v.contact;  touched = true; }
         if(v.cnpj      && !eq.cnpj)     { eq.cnpj      = v.cnpj;     touched = true; }
+        // v1.9: propagar dados de contato e campos operacionais
+        if(v.phone  && !eq.phone)  { eq.phone  = v.phone;  touched = true; }
+        if(v.email  && !eq.email)  { eq.email  = v.email;  touched = true; }
+        if(v.city   && !eq.city)   { eq.city   = v.city;   touched = true; }
+        if(v.obsOp  && !eq.obsOp)  { eq.obsOp  = v.obsOp;  touched = true; }
 
         const visitParts = v.parts && typeof v.parts === 'object' ? v.parts : null;
         if(visitParts){
