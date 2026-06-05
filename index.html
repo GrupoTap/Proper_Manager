@@ -467,7 +467,7 @@ tr:hover td{background:var(--gray-50)}
       <div class="login-logo-mark">PC</div>
       <div class="login-logo-text">Proper Compressores</div>
     </div>
-    <div class="login-sub">ProperCare Manager · v3.14 — Acesso restrito</div>
+    <div class="login-sub">ProperCare Manager · v3.19 — Acesso restrito</div>
     <label class="login-label">Senha de acesso</label>
     <input class="login-input" type="password" id="loginInput" placeholder="••••••"
            maxlength="20" onkeydown="if(event.key==='Enter')loginEntrar()">
@@ -1182,6 +1182,13 @@ function escHtml(v) {
     .replace(/>/g, '&gt;').replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
 }
+function escJs(v) {
+  return String(v ?? '')
+    .replace(/\\/g, '\\\\')
+    .replace(/'/g, "\\'")
+    .replace(/\n/g, '\\n')
+    .replace(/\r/g, '');
+}
 
 // Normaliza referência para comparação: remove pontos, traços, espaços, uppercase
 function normalizeRef(ref) {
@@ -1820,10 +1827,13 @@ async function testGS(){
 
 async function syncToGS(action,payload){
   if(!gsUrl||!gsConnected) return null;
-  // Sem Content-Type: evita preflight CORS (Apps Script não responde OPTIONS)
   const r = await fetch(gsUrl,{method:'POST',body:JSON.stringify({action,key:_AUTH_HASH,...payload})});
-  const json = await r.json();
-  if(json.status!=='ok') throw new Error(json.error||'Erro GS');
+  if(!r.ok) throw new Error('HTTP ' + r.status);
+  const txt = await r.text();
+  if(txt.trim().startsWith('<')) throw new Error('GAS retornou HTML — verifique publicação do Web App');
+  let json;
+  try { json = JSON.parse(txt); } catch(e) { throw new Error('Resposta inválida do GAS: ' + txt.slice(0,80)); }
+  if(!json || json.status !== 'ok') throw new Error(json?.error || 'Erro GS');
   return json;
 }
 
@@ -3048,11 +3058,11 @@ function renderPartsTable(parts,modelId,type,subId){
 
       return`<tr>
         <td>
-          <div class="td-name">${p.name}${p.criticality==='alta'?'<span style="background:var(--orange-light);color:var(--orange);font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;margin-left:5px">CRÍTICO</span>':p.criticality==='segurança'?'<span style="background:var(--red-light);color:var(--red);font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;margin-left:5px">NR</span>':''}</div>
+          <div class="td-name">${escHtml(p.name)}${p.criticality==='alta'?'<span style="background:var(--orange-light);color:var(--orange);font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;margin-left:5px">CRÍTICO</span>':p.criticality==='segurança'?'<span style="background:var(--red-light);color:var(--red);font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;margin-left:5px">NR</span>':''}</div>
           ${p.obs?`<div class="td-obs">${p.obs}</div>`:''}
         </td>
         <td>
-          ${p.ref?`<span class="td-ref" style="cursor:pointer" title="Clique para copiar" onclick="navigator.clipboard?.writeText('${p.ref}');this.textContent='✓ copiado!';setTimeout(()=>this.textContent='${p.ref}',1500)">${p.ref}</span>`:'<span style="color:var(--text3)">—</span>'}
+          ${p.ref?`<span class="td-ref" style="cursor:pointer" title="Clique para copiar" onclick="navigator.clipboard?.writeText('${escJs(p.ref)}');this.textContent='✓ copiado!';setTimeout(()=>this.textContent='${escJs(p.ref)}',1500)">${escHtml(p.ref)}</span>`:'<span style="color:var(--text3)">—</span>'}
         </td>
         <td><span style="font-size:12px;${p.interval?'color:var(--text2)':'color:var(--text3)'}">${p.interval?p.interval+'h':'—'}</span></td>
         <td>
@@ -3066,13 +3076,13 @@ function renderPartsTable(parts,modelId,type,subId){
                 const ref=typeof s==='string'?s:(s.ref||'');
                 const brand=typeof s==='object'&&s.brand?s.brand:'';
                 return `<span class="sim-tag"
-                  title="${brand}"
+                  title="${escHtml(brand)}"
                   style="cursor:pointer"
-                  onclick="navigator.clipboard?.writeText('${ref}');
+                  onclick="navigator.clipboard?.writeText('${escJs(ref)}');
                            this.style.background='var(--green-light)';
                            this.style.color='var(--green)';
                            setTimeout(()=>{this.style.background='';this.style.color='';},1200)">
-                  ${ref}${brand?`<span style="font-size:9px;opacity:.7;margin-left:3px">${brand}</span>`:''}
+                  ${escHtml(ref)}${brand?`<span style="font-size:9px;opacity:.7;margin-left:3px">${escHtml(brand)}</span>`:''}
                 </span>`;
               }).join('')}
             </div>`
@@ -3082,7 +3092,7 @@ function renderPartsTable(parts,modelId,type,subId){
           ${apps.length?`<div style="font-size:10px;color:var(--text2);line-height:1.5">${apps.slice(0,2).join('<br>')}${apps.length>2?`<span style="color:var(--text3)"> +${apps.length-2}</span>`:''}</div>`:'<span style="color:var(--text3);font-size:10px">—</span>'}
         </td>
         <td><div class="row-actions">
-          ${p.ref ? `<button class="btn btn-secondary btn-sm" title="Ver compatibilidade" onclick="showCompatModal('${p.ref}','${p.name.replace(/'/g,"\\'")}')">⇄</button>` : ''}
+          ${p.ref ? `<button class="btn btn-secondary btn-sm" title="Ver compatibilidade" onclick="showCompatModal('${escJs(p.ref)}','${escJs(p.name)}')">⇄</button>` : ''}
           <button class="btn btn-secondary btn-sm" onclick="openEditPart('${modelId}','${type}',${subId?`'${subId}'`:'null'},'${p.id}')">Editar</button>
           <button class="btn btn-danger btn-sm" onclick="deletePart('${modelId}','${type}',${subId?`'${subId}'`:'null'},'${p.id}')">×</button>
         </div></td>
@@ -3369,22 +3379,27 @@ function saveSub(){
   syncFullModelCatalogToGS(editSubModelId);
 }
 
-function deleteSub(modelId,subId){
+async function deleteSub(modelId,subId){
   if(!confirm('Excluir subsistema e todas as suas peças?')) return;
   const m=getModel(modelId);
-  const sub=m.subsystems.find(s=>s.id===subId);
+  const sub=m?.subsystems?.find(s=>s.id===subId);
+  if(!m || !sub){ toast('Subsistema não encontrado','error'); return; }
 
-  // PCM-9: registrar tombstone de todos os Part_IDs do subsistema
-  if(sub?.parts?.length){
+  if(sub.parts?.length){
     if(!db._deletedPartIds) db._deletedPartIds={};
     sub.parts.forEach(p=>{ if(p.id) db._deletedPartIds[p.id]=Date.now(); });
   }
 
   m.subsystems=m.subsystems.filter(s=>s.id!==subId);
   save(); renderCatalog(); switchTab('subs');
-  toast('Subsistema excluído');
-  // Tenta sync; se falhar, os tombstones garantem que a reconciliação não reinsira as peças
-  syncToGS('deleteSubsystemParts',{modelId,subId,deletedBy:'admin'});
+
+  try{
+    await syncToGS('deleteSubsystemParts',{modelId,subId,deletedBy:'admin'});
+    toast('Subsistema excluído','success');
+  }catch(err){
+    console.warn('deleteSubsystemParts falhou:',err);
+    toast('Excluído localmente. Sincronização pendente/falhou.','error');
+  }
 }
 
 // ── PART MODAL ──
@@ -4507,9 +4522,11 @@ function saveMachineParts(){
   // Sincronizar com GAS
   syncToGS('updateMachineParts',{
     machine_id: eq.id,
+    serial:     eq.serial || '',
+    tag:        eq.tag    || '',
     hour_total: eq.hourTotal||0,
-    hpw: eq.hpw||0,
-    parts: newParts
+    hpw:        eq.hpw||0,
+    parts:      newParts
   });
 
   toast('Peças salvas com sucesso','success');
