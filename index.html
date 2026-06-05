@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ProperCare Manager · Gestão PGP v3.14</title>
+<title>ProperCare Manager · Gestão PGP v3.19</title>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <style>
@@ -481,7 +481,7 @@ tr:hover td{background:var(--gray-50)}
     <div class="logo-mark">PC</div>
     <div class="logo-text">Proper Compressores</div>
     <div class="logo-sep"></div>
-    <div class="logo-sub">PCM v3.14</div>
+    <div class="logo-sub">PCM v3.19</div>
   </div>
   <nav class="header-nav">
     <button class="nav-btn active" onclick="showView('dashboard')" id="navDashboard">Dashboard</button>
@@ -1175,6 +1175,14 @@ function runMigrations() {
   }
 }
 
+// PCM-6: escapa HTML para uso seguro em innerHTML
+function escHtml(v) {
+  return String(v ?? '')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 // Normaliza referência para comparação: remove pontos, traços, espaços, uppercase
 function normalizeRef(ref) {
   return (ref || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
@@ -1210,12 +1218,55 @@ function findModelsByPartRef(ref) {
   return result;
 }
 
-// Máquinas em campo que usam qualquer modelo compatível com esta ref
+// Máquinas em campo que usam qualquer modelo compatível com esta ref,
+// OU que possuem a ref diretamente em eq.parts (PCM-2)
 function findMachinesByPartRef(ref) {
-  const models = findModelsByPartRef(ref);
-  return db.machines.filter(eq =>
-    models.some(m => modelKey(m.brand, m.model) === modelKey(eq.brand, eq.model))
-  );
+  const n = normalizeRef(ref);
+  if (!n) return [];
+
+  const catalogModels = findModelsByPartRef(ref);
+  const catalogKeys = new Set(catalogModels.map(m => modelKey(m.brand, m.model)));
+
+  const result = [];
+
+  db.machines.forEach(eq => {
+    const fromCatalog = catalogKeys.has(modelKey(eq.brand, eq.model));
+
+    let matchedPart = null;
+    if (eq.parts) {
+      for (const [pid, ps] of Object.entries(eq.parts)) {
+        const refs = [
+          normalizeRef(ps.ref || ''),
+          ...(ps.similarities || []).map(s => normalizeRef(typeof s === 'string' ? s : (s.ref || '')))
+        ].filter(Boolean);
+        if (refs.includes(n)) {
+          matchedPart = { pid, name: ps.name || pid, ref: ps.ref || '', matchType: 'machine_ref' };
+          break;
+        }
+      }
+    }
+
+    if (fromCatalog || matchedPart) {
+      if (!result.find(r => r.machineId === eq.id)) {
+        const catMatch = catalogModels.find(m => modelKey(m.brand, m.model) === modelKey(eq.brand, eq.model));
+        result.push({
+          machineId:       eq.id,
+          client:          eq.client,
+          brand:           eq.brand,
+          model:           eq.model,
+          serial:          eq.serial,
+          tag:             eq.tag,
+          hourTotal:       eq.hourTotal || 0,
+          source:          matchedPart ? 'machine_parts' : 'catalog_model',
+          matchedPartName: matchedPart?.name || catMatch?.part?.name || '',
+          matchedRef:      matchedPart?.ref || ref,
+          matchType:       matchedPart?.matchType || 'catalog'
+        });
+      }
+    }
+  });
+
+  return result;
 }
 
 // ─── Hash estável para comparação de db antes/depois de sync ─────────────
@@ -2608,6 +2659,182 @@ function renderPreventivas(){
   }
 }
 
+// PCM-7: Card de consulta de peças — inserido no início de renderCatalog()
+function renderPartSearchCard() {
+  return `
+    <div id="partSearchCard" style="background:white;border-radius:var(--radius);border:1px solid var(--border);margin-bottom:14px;overflow:hidden">
+      <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
+        <span style="font-size:14px">🔍</span>
+        <span style="font-weight:600;font-size:13px">Consulta de Peças e Equivalências</span>
+      </div>
+      <div style="padding:12px 16px">
+        <div style="display:flex;gap:8px;margin-bottom:10px">
+          <input type="text" id="partSearchInput"
+            placeholder="Referência OEM, similar, nome da peça ou modelo..."
+            style="flex:1;border:1.5px solid var(--border);border-radius:var(--radius);padding:8px 12px;font-size:13px;outline:none"
+            oninput="renderPartSearchResults()"
+            onkeydown="if(event.key==='Enter') renderPartSearchResults()" />
+          <button class="btn btn-secondary btn-sm" onclick="document.getElementById('partSearchInput').value='';renderPartSearchResults()">✕</button>
+        </div>
+        <div id="partSearchResults"></div>
+      </div>
+    </div>`;
+}
+
+// PCM-8: Renderiza os resultados da consulta de peças
+function renderPartSearchResults() {
+  const q = (document.getElementById('partSearchInput')?.value || '').trim();
+  const el = document.getElementById('partSearchResults');
+  if (!el) return;
+  if (!q || q.length < 2) { el.innerHTML = ''; return; }
+
+  const results = searchPartsAndApplications(q);
+  if (!results.length) {
+    el.innerHTML = '<div style="font-size:12px;color:var(--text3);padding:8px 0">Nenhuma peça encontrada para "' + escHtml(q) + '".</div>';
+    return;
+  }
+
+  const groups = {};
+  results.forEach(r => {
+    const k = (r.partId || '') + '::' + (r.modelId || '') + '::' + (r.brand || '') + '::' + (r.model || '');
+    if (!groups[k]) groups[k] = { ...r, machines: [] };
+  });
+
+  results.filter(r => r.source === 'machine_parts').forEach(r => {
+    const matchGroup = Object.values(groups).find(g =>
+      g.source === 'catalog' &&
+      modelKey(g.brand, g.model) === modelKey(r.brand, r.model)
+    );
+    if (matchGroup) matchGroup.machines.push(r);
+  });
+
+  const catalogGroups = Object.values(groups).filter(g => g.source === 'catalog');
+  const orphanMachines = results.filter(r => r.source === 'machine_parts' &&
+    !catalogGroups.find(g => modelKey(g.brand, g.model) === modelKey(r.brand, r.model))
+  );
+
+  let html = `<div style="font-size:11px;color:var(--text3);margin-bottom:8px">${results.length} resultado(s) para <strong>${escHtml(q)}</strong></div>`;
+
+  catalogGroups.forEach(g => {
+    const sims = (g.similarities || []).map(s => typeof s === 'string' ? s : s.ref).filter(Boolean);
+    html += `
+      <div style="border:1px solid var(--border);border-radius:var(--radius);margin-bottom:8px;overflow:hidden">
+        <div style="padding:8px 12px;background:var(--blue-pale);display:flex;align-items:center;justify-content:space-between;gap:8px">
+          <div>
+            <div style="font-weight:700;font-size:12px">${escHtml(g.partName)} <span style="font-weight:400;color:var(--text3)">· ref: ${escHtml(g.oemRef || '—')}</span></div>
+            <div style="font-size:10px;color:var(--text2)">${escHtml(g.brand)} ${escHtml(g.model)}${g.subsystem ? ' · ' + escHtml(g.subsystem) : ''}${g.slot ? ' · slot: ' + escHtml(g.slot) : ''}</div>
+          </div>
+          <button class="btn btn-secondary btn-xs" onclick="selectModel('${g.modelId}');showView('catalog')">Ver modelo</button>
+        </div>
+        ${sims.length ? `<div style="padding:5px 12px;font-size:10px;color:var(--text2)">Similares: ${sims.map(s => `<span style="background:#f0f0f0;border-radius:4px;padding:1px 5px;margin-right:3px">${escHtml(s)}</span>`).join('')}</div>` : ''}
+        ${g.machines?.length ? `<div style="padding:5px 12px 8px;border-top:1px solid var(--border)">
+          <div style="font-size:10px;font-weight:700;color:var(--text3);margin-bottom:4px">MÁQUINAS EM CAMPO</div>
+          ${g.machines.map(m => `<div style="font-size:11px;padding:2px 0;color:var(--text2)">${escHtml(m.client)} · S/N ${escHtml(m.serial || '—')} · ${(m.hourTotal || 0).toLocaleString('pt-BR')}h
+            <button class="btn btn-secondary btn-xs" style="margin-left:4px" onclick="openMachineDetail('${m.machineId}')">Abrir</button></div>`).join('')}
+        </div>` : ''}
+      </div>`;
+  });
+
+  if (orphanMachines.length) {
+    html += `<div style="border:1px solid #fcd9a0;border-radius:var(--radius);padding:8px 12px;margin-bottom:8px;background:#fff9f0">
+      <div style="font-size:11px;font-weight:700;color:#d97706;margin-bottom:4px">⚠ Peças em campo não catalogadas</div>
+      ${orphanMachines.map(m => `<div style="font-size:11px;color:var(--text2)">${escHtml(m.client)} · ${escHtml(m.brand)} ${escHtml(m.model)} · ref: ${escHtml(m.oemRef || '—')}
+        <button class="btn btn-secondary btn-xs" style="margin-left:4px" onclick="openMachineDetail('${m.machineId}')">Abrir</button></div>`).join('')}
+    </div>`;
+  }
+
+  el.innerHTML = html;
+}
+
+// PCM-6: Índice global de referências (catálogo + máquinas)
+function buildPartReferenceIndex() {
+  const idx = {};
+  const add = (normRef, entry) => {
+    if (!normRef) return;
+    if (!idx[normRef]) idx[normRef] = [];
+    if (!idx[normRef].find(e => e.partId === entry.partId && e.modelId === entry.modelId && e.machineId === entry.machineId))
+      idx[normRef].push(entry);
+  };
+
+  db.models.forEach(m => {
+    const allParts = [
+      ...(m.directParts || []),
+      ...((m.subsystems || []).flatMap(s => (s.parts || []).map(p => ({ ...p, _sub: s.name }))))
+    ];
+    allParts.forEach(p => {
+      const base = {
+        modelId: m.id, brand: m.brand, model: m.model,
+        partId: p.id, partName: p.name, slot: p.slot || '',
+        interval: p.interval || '', subsystem: p._sub || '',
+        oemRef: p.ref || '', similarities: p.similarities || [], source: 'catalog'
+      };
+      add(normalizeRef(p.ref), base);
+      (p.similarities || []).forEach(s => {
+        const sRef = typeof s === 'string' ? s : (s.ref || '');
+        add(normalizeRef(sRef), { ...base, matchType: 'similar', matchedRef: sRef });
+      });
+    });
+  });
+
+  db.machines.forEach(eq => {
+    if (!eq.parts) return;
+    Object.entries(eq.parts).forEach(([pid, ps]) => {
+      const base = {
+        modelId: null, machineId: eq.id, client: eq.client,
+        brand: eq.brand, model: eq.model, serial: eq.serial, tag: eq.tag,
+        hourTotal: eq.hourTotal || 0, partId: pid, partName: ps.name || pid,
+        slot: '', interval: ps.interval || '', subsystem: '',
+        oemRef: ps.ref || '', similarities: ps.similarities || [], source: 'machine_parts'
+      };
+      add(normalizeRef(ps.ref), base);
+    });
+  });
+
+  return idx;
+}
+
+// PCM-6: busca por ref ou nome da peça em todo o catálogo e máquinas
+function searchPartsAndApplications(query) {
+  const n = normalizeRef(query);
+  if (!n || n.length < 2) return [];
+
+  const idx = buildPartReferenceIndex();
+  const byRef = idx[n] || [];
+  const byName = [];
+  const normName = String(query || '').trim().toLowerCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g, '');
+
+  if (normName.length >= 3) {
+    db.models.forEach(m => {
+      const allParts = [
+        ...(m.directParts || []),
+        ...((m.subsystems || []).flatMap(s => (s.parts || []).map(p => ({ ...p, _sub: s.name }))))
+      ];
+      allParts.forEach(p => {
+        const pn = String(p.name || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+        const mn = String((m.brand || '') + ' ' + (m.model || '')).toLowerCase()
+          .normalize('NFD').replace(/[̀-ͯ]/g, '');
+        if (pn.includes(normName) || mn.includes(normName)) {
+          byName.push({
+            modelId: m.id, brand: m.brand, model: m.model,
+            partId: p.id, partName: p.name, slot: p.slot || '',
+            interval: p.interval || '', subsystem: p._sub || '',
+            oemRef: p.ref || '', similarities: p.similarities || [],
+            source: 'catalog', matchType: 'name'
+          });
+        }
+      });
+    });
+  }
+
+  const seen = new Set();
+  return [...byRef, ...byName].filter(e => {
+    const k = (e.partId || '') + '::' + (e.modelId || '') + '::' + (e.machineId || '');
+    if (seen.has(k)) return false;
+    seen.add(k); return true;
+  });
+}
+
 function renderCatalog(){
   const el=document.getElementById('viewCatalog');
 
@@ -2615,7 +2842,7 @@ function renderCatalog(){
   if(!selModelId||!getModel(selModelId)){
     const total=db.models.length;
     const totalParts=db.models.reduce((a,m)=>(m.directParts||[]).length+(m.subsystems||[]).reduce((b,s)=>b+s.parts.length,0)+a,0);
-    el.innerHTML=`
+    el.innerHTML=`${renderPartSearchCard()}
       <div style="font-size:18px;font-weight:700;margin-bottom:4px">Catálogo de Modelos</div>
       <div style="font-size:12px;color:var(--text2);margin-bottom:16px">
         Referências técnicas de equipamentos — peças, intervalos e similares.
@@ -2665,7 +2892,7 @@ function renderCatalog(){
   const nPhotos=(m.photos||[]).length;
   const machinesWithModel=db.machines.filter(eq=>modelKey(eq.brand,eq.model)===modelKey(m.brand,m.model));
 
-  el.innerHTML=`
+  el.innerHTML=`${renderPartSearchCard()}
     <div class="model-hero">
       <div class="model-hero-top">
         <div>
@@ -2772,20 +2999,20 @@ function renderPartsTable(parts,modelId,type,subId){
   if(!parts||!parts.length) return`<div style="padding:20px;text-align:center;color:var(--text3);font-size:12px;border:1px solid var(--border);border-radius:var(--radius)">Nenhuma peça cadastrada. Clique em "+ Adicionar peça" para começar.</div>`;
 
   // Índice de referências em todo o catálogo para mostrar aplicações cruzadas
+  // PCM-1: usa normalizeRef() para garantir que W-962, W 962 e W962 colapsem na mesma chave
   const refIndex={};
   db.models.forEach(m=>{
     const allP=[...(m.directParts||[]),...(m.subsystems||[]).flatMap(s=>s.parts)];
     allP.forEach(p=>{
-      if(p.ref){
-        if(!refIndex[p.ref]) refIndex[p.ref]=new Set();
-        refIndex[p.ref].add(m.brand+' '+m.model);
-      }
+      const _nRef=normalizeRef(p.ref);
+      if(_nRef){ if(!refIndex[_nRef]) refIndex[_nRef]=new Set(); refIndex[_nRef].add(m.brand+' '+m.model); }
       // Similares também
       (p.similarities||[]).forEach(sim=>{
         const simRef=typeof sim==='string'?sim:(sim?.ref||'');
-        if(!simRef) return;
-        if(!refIndex[simRef]) refIndex[simRef]=new Set();
-        refIndex[simRef].add(m.brand+' '+m.model);
+        const _nSimRef=normalizeRef(simRef);
+        if(!_nSimRef) return;
+        if(!refIndex[_nSimRef]) refIndex[_nSimRef]=new Set();
+        refIndex[_nSimRef].add(m.brand+' '+m.model);
       });
     });
   });
@@ -2808,11 +3035,14 @@ function renderPartsTable(parts,modelId,type,subId){
     </tr></thead>
     <tbody>${parts.map(p=>{
       // Calcular aplicações cruzadas desta referência
+      // PCM-1: lê do refIndex usando normalizeRef()
       const appsSet=new Set();
-      if(p.ref&&refIndex[p.ref]){refIndex[p.ref].forEach(a=>{if(a!==getModel(modelId)?.brand+' '+getModel(modelId)?.model) appsSet.add(a);});}
+      const _mLabel=getModel(modelId)?.brand+' '+getModel(modelId)?.model;
+      if(p.ref&&refIndex[normalizeRef(p.ref)]){refIndex[normalizeRef(p.ref)].forEach(a=>{if(a!==_mLabel) appsSet.add(a);});}
       (p.similarities||[]).forEach(sim=>{
         const simRef=typeof sim==='string'?sim:(sim?.ref||'');
-        if(refIndex[simRef]){refIndex[simRef].forEach(a=>{if(a!==getModel(modelId)?.brand+' '+getModel(modelId)?.model) appsSet.add(a);});}
+        const _nSim=normalizeRef(simRef);
+        if(refIndex[_nSim]){refIndex[_nSim].forEach(a=>{if(a!==_mLabel) appsSet.add(a);});}
       });
       const apps=[...appsSet];
 
@@ -2978,10 +3208,14 @@ function openModalModel(id=null){
   document.getElementById('dupModelAlert').classList.remove('show');
   if(id){
     const m=getModel(id);
-    ['mBrand','mModel','mObs','mPower','mPressure','mFlow','mVoltage','mAmpere'].forEach(k=>{
-      const key=k.replace('m','').toLowerCase();
-      const el=document.getElementById(k);
-      if(el) el.value=m[key]||'';
+    // SYNC-2: mapeia campos do modal para propriedades do modelo (incluindo mFlow/mVoltage/mAmpere)
+    const _fieldMap={mBrand:'brand',mModel:'model',mObs:'obs',mPower:'power',mPressure:'pressure',
+                     mFlow:'flow',mVoltage:'voltage',mAmpere:'ampere'};
+    Object.entries(_fieldMap).forEach(([inputId,propKey])=>{
+      const elInp=document.getElementById(inputId);
+      if(!elInp) return;
+      // Tenta propriedade direta, depois prefixada com m (mFlow/mVoltage/mAmpere do syncCatalogFromGS)
+      elInp.value = m[propKey] || m['m'+propKey.charAt(0).toUpperCase()+propKey.slice(1)] || '';
     });
     document.getElementById('mType').value=m.type||'Compressor Parafuso';
   } else {
@@ -3138,9 +3372,18 @@ function saveSub(){
 function deleteSub(modelId,subId){
   if(!confirm('Excluir subsistema e todas as suas peças?')) return;
   const m=getModel(modelId);
+  const sub=m.subsystems.find(s=>s.id===subId);
+
+  // PCM-9: registrar tombstone de todos os Part_IDs do subsistema
+  if(sub?.parts?.length){
+    if(!db._deletedPartIds) db._deletedPartIds={};
+    sub.parts.forEach(p=>{ if(p.id) db._deletedPartIds[p.id]=Date.now(); });
+  }
+
   m.subsystems=m.subsystems.filter(s=>s.id!==subId);
   save(); renderCatalog(); switchTab('subs');
   toast('Subsistema excluído');
+  // Tenta sync; se falhar, os tombstones garantem que a reconciliação não reinsira as peças
   syncToGS('deleteSubsystemParts',{modelId,subId,deletedBy:'admin'});
 }
 
@@ -3295,18 +3538,16 @@ function checkPartRefDuplicate(ref) {
 }
 
 function showCompatModal(ref, partName) {
-  const models = findModelsByPartRef(ref);
-  const machines = findMachinesByPartRef(ref);
+  const models   = findModelsByPartRef(ref);
+  const machines = findMachinesByPartRef(ref);  // PCM-2: inclui eq.parts
 
   document.getElementById('modalCompatTitle').textContent =
-    'Compatibilidade — ' + (partName || ref);
+    'Compatibilidade — ' + escHtml(partName || ref);
 
-  if (!models.length) {
-    document.getElementById('modalCompatBody').innerHTML =
-      '<div style="padding:20px;text-align:center;color:var(--text3);font-size:12px">Nenhum outro modelo encontrado para esta referência.</div>';
-  } else {
-    const machineCount = machines.length;
-    document.getElementById('modalCompatBody').innerHTML = `
+  let html = '';
+
+  if (models.length) {
+    html += `
       <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text3);margin-bottom:8px">
         Modelos compatíveis (${models.length})
       </div>
@@ -3314,18 +3555,38 @@ function showCompatModal(ref, partName) {
         ${models.map(r => `
           <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--blue-pale);border:1px solid var(--blue-light);border-radius:var(--radius)">
             <div>
-              <div style="font-weight:600;font-size:12px">${r.brand} ${r.model}</div>
-              <div style="font-size:10px;color:var(--text3)">${r.part.name}${r.part.slot ? ' · ' + r.part.slot : ''}</div>
+              <div style="font-weight:600;font-size:12px">${escHtml(r.brand)} ${escHtml(r.model)}</div>
+              <div style="font-size:10px;color:var(--text3)">${escHtml(r.part.name)}${r.part.slot ? ' · ' + escHtml(r.part.slot) : ''}</div>
             </div>
             <button class="btn btn-secondary btn-xs" onclick="selectModel('${r.modelId}');closeModal('modalCompat');showView('catalog')">Ver modelo</button>
           </div>`).join('')}
-      </div>
-      <div style="font-size:11px;color:var(--text2);padding:8px 12px;background:var(--gray-50);border-radius:var(--radius);border:1px solid var(--border)">
-        🏭 <strong>${machineCount}</strong> máquina${machineCount !== 1 ? 's' : ''} em campo ${machineCount !== 1 ? 'usam' : 'usa'} ${machineCount !== 1 ? 'um' : 'o'} modelo compatível
-        ${machineCount > 0 ? `<button class="btn btn-secondary btn-xs" style="margin-left:8px" onclick="showView('machines');closeModal('modalCompat')">Ver máquinas</button>` : ''}
-      </div>
-    `;
+      </div>`;
   }
+
+  // PCM-3: mostrar máquinas mesmo se models.length === 0
+  if (machines.length) {
+    html += `
+      <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text3);margin-bottom:8px">
+        Máquinas em campo (${machines.length})
+      </div>
+      <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:14px">
+        ${machines.map(m => `
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--gray-50,#f8f9fa);border:1px solid var(--border);border-radius:var(--radius)">
+            <div>
+              <div style="font-weight:600;font-size:12px">${escHtml(m.client || '—')}</div>
+              <div style="font-size:10px;color:var(--text3)">${escHtml(m.brand)} ${escHtml(m.model)} · S/N ${escHtml(m.serial || '—')} · TAG ${escHtml(m.tag || '—')} · ${(m.hourTotal || 0).toLocaleString('pt-BR')}h</div>
+              <div style="font-size:10px;color:var(--text2)">${m.matchedPartName ? escHtml(m.matchedPartName) + ' · ' : ''}<span style="background:${m.source==='machine_parts'?'#fef3c7':'#dbeafe'};border-radius:4px;padding:1px 5px">${m.source==='machine_parts'?'campo':'catálogo'}</span></div>
+            </div>
+            <button class="btn btn-secondary btn-xs" onclick="openMachineDetail('${m.machineId}');closeModal('modalCompat')">Abrir</button>
+          </div>`).join('')}
+      </div>`;
+  }
+
+  if (!html) {
+    html = '<div style="padding:20px;text-align:center;color:var(--text3);font-size:12px">Nenhuma correspondência encontrada para esta referência.</div>';
+  }
+
+  document.getElementById('modalCompatBody').innerHTML = html;
   openModal('modalCompat');
 }
 
@@ -4212,22 +4473,31 @@ function saveMachineParts(){
     const name = nameEl.value.trim();
     if(!name) return;
 
-    // Determinar ID: se for peça padrão, manter ID; se for extra, gerar slug
-    const defaultIdx = DEFAULT_PARTS.findIndex(d=>d.name===name||(d.id===name));
-    let pid;
-    if(defaultIdx>=0){
-      pid = DEFAULT_PARTS[defaultIdx].id;
-    } else {
-      // Manter ID existente ou gerar novo
-      pid = name.toLowerCase().replace(/[^a-z0-9]/g,'_').replace(/__+/g,'_').slice(0,30)+'_'+i;
+    // PCM-5: lê pid estável do data-pid; fallback para DEFAULT_PARTS ou geração única
+    let pid = row.dataset.pid || '';
+    if (!pid) {
+      const defaultIdx = DEFAULT_PARTS.findIndex(d => d.name === name || (d.id === name));
+      if (defaultIdx >= 0) {
+        pid = DEFAULT_PARTS[defaultIdx].id;
+      } else {
+        pid = 'p_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6);
+      }
+      row.dataset.pid = pid;
     }
 
+    // PCM-4: preservar campos computados que não estão no formulário de edição
+    const existing = eq.parts?.[pid] || {};
     newParts[pid] = {
       name,
-      lastChange: parseInt(lastEl?.value||0)||0,
-      interval:   parseInt(intEl?.value||2000)||2000,
-      ref:        refEl?.value.trim()||'',
-      na:         naBtn?.classList.contains('active')||false,
+      lastChange:     parseInt(lastEl?.value||0)||0,
+      interval:       parseInt(intEl?.value||2000)||2000,
+      ref:            refEl?.value.trim()||'',
+      na:             naBtn?.classList.contains('active')||false,
+      valorMostrado:  existing.valorMostrado  ?? '',
+      contador:       existing.contador       ?? '',
+      horasRodadas:   existing.horasRodadas   ?? '',
+      horasRestantes: existing.horasRestantes ?? '',
+      status:         existing.status         ?? ''
     };
   });
 
@@ -4970,6 +5240,10 @@ async function syncCatalogFromGS(gsGet){
       if(!target) target=(db.models||[]).find(m=>norm(m.brand)===norm(brand)&&norm(m.model)===norm(model));
       if(!target){ target={id:rowId||uid(),brand:'',model:'',type:'',power:'',pressure:'',obs:'',tipoRegistro:'PRODUCAO',photos:[],subsystems:[],directParts:[],flow:'',voltage:'',ampere:''}; db.models.push(target); }
       Object.assign(target,{id:target.id||rowId,brand,model,type:row.Tipo||'',power:row['Potência']||'',pressure:row['Pressão']||'',obs:row['Observações']||'',tipoRegistro:row.Tipo_Registro||target.tipoRegistro||'PRODUCAO'});
+      // SYNC-2: campos técnicos novos — preservar se já existem localmente
+      target.mFlow    = target.mFlow    || row['Vazao_l_min'] || '';
+      target.mVoltage = target.mVoltage || row['Tensao']      || '';
+      target.mAmpere  = target.mAmpere  || row['Corrente_A']  || '';
       target.photos=Array.isArray(target.photos)?target.photos:[];
       target.directParts=[]; target.subsystems=[];
       modelById.set(String(target.id),target);
