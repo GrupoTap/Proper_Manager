@@ -1627,6 +1627,16 @@ let _bootSilentSyncDone=false;
 
 function normKey(v){ return String(v||'').trim().toLowerCase(); }
 
+function hasVal(v) {
+  return v !== undefined && v !== null && v !== '';
+}
+
+function pickVal(newVal, oldVal, fallback='') {
+  if (hasVal(newVal)) return newVal;
+  if (hasVal(oldVal)) return oldVal;
+  return fallback;
+}
+
 function normalizeEntityName(v) {
   return String(v || '')
     .trim().toLowerCase()
@@ -4341,9 +4351,9 @@ function _getEffectiveParts(eq){
     valorMostrado: (stored[dp.id]?.valorMostrado !== undefined && stored[dp.id]?.valorMostrado !== null)
                      ? stored[dp.id].valorMostrado : '',
     contador: stored[dp.id]?.contador || '',
-    horasRodadas: stored[dp.id]?.horasRodadas || '',
-    horasRestantes: stored[dp.id]?.horasRestantes || '',
-    status: stored[dp.id]?.status || '',
+    horasRodadas:   hasVal(stored[dp.id]?.horasRodadas)   ? stored[dp.id].horasRodadas   : '',
+    horasRestantes: hasVal(stored[dp.id]?.horasRestantes) ? stored[dp.id].horasRestantes : '',
+    status:         hasVal(stored[dp.id]?.status)         ? stored[dp.id].status         : '',
     _default: true
   }));
   // Adicionar peças extras (não padrão)
@@ -4351,7 +4361,15 @@ function _getEffectiveParts(eq){
   Object.entries(stored).forEach(([pid, ps])=>{
     if(!defaultIds.has(pid)){
       list.push({id:pid, name:ps.name||pid, interval:ps.interval||2000,
-        lastChange: ('lastChange' in ps) ? ps.lastChange : null, ref:ps.ref||'', na:ps.na||false, valorMostrado: ps.valorMostrado||'', contador: ps.contador||'', horasRodadas: ps.horasRodadas||'', horasRestantes: ps.horasRestantes||'', status: ps.status||'', _default:false});
+        lastChange:     ('lastChange' in ps) ? ps.lastChange : null,
+        ref:            ps.ref || '',
+        na:             ps.na || false,
+        valorMostrado:  hasVal(ps.valorMostrado)   ? ps.valorMostrado   : '',
+        contador:       hasVal(ps.contador)        ? ps.contador        : '',
+        horasRodadas:   hasVal(ps.horasRodadas)    ? ps.horasRodadas    : '',
+        horasRestantes: hasVal(ps.horasRestantes)  ? ps.horasRestantes  : '',
+        status:         hasVal(ps.status)          ? ps.status          : '',
+        _default: false});
     }
   });
   return list;
@@ -4359,7 +4377,14 @@ function _getEffectiveParts(eq){
 
 function _buildPartsReadTable(eq, hourTotal, hpw){
   const parts = _getEffectiveParts(eq);
-  const hasParts = parts.some(p=>!p.na&&((p.lastChange!==null && p.lastChange!==undefined && p.lastChange!=='') || (parseInt(p.interval)||0)>0 || p.valorMostrado || p.contador));
+  const hasParts = parts.some(p =>
+    !p.na && (
+      hasVal(p.lastChange) ||
+      (parseInt(p.interval) || 0) > 0 ||
+      hasVal(p.valorMostrado) ||
+      hasVal(p.contador)
+    )
+  );
   if(!hasParts) return `<div style="background:var(--orange-light);border-left:3px solid var(--orange);padding:10px 14px;border-radius:var(--radius);font-size:12px;color:#92400e">
     ⚠ Nenhum dado de peça registrado. Clique em <strong>✏️ Editar peças</strong> para lançar os horímetros.</div>`;
 
@@ -4382,7 +4407,7 @@ function _buildPartsReadTable(eq, hourTotal, hpw){
       return `<tr${trClass}${trStyle}>
         <td><div class="td-name">${p.name}${p.na?' <span style="font-size:10px;color:#9ca3af;font-style:italic">(N/A)</span>':''}</div></td>
         <td>${p.ref||'—'}</td>
-        <td>${p.valorMostrado!==undefined&&p.valorMostrado!==null&&String(p.valorMostrado)!==''?`${p.valorMostrado}h`:'—'}</td>
+        <td>${hasVal(p.valorMostrado) ? `${p.valorMostrado}h` : '—'}</td>
         <td>${p.contador||'—'}</td>
         <td>${(p.lastChange!==null&&p.lastChange!==undefined&&p.lastChange!=='')?`${Number(p.lastChange).toLocaleString('pt-BR')}h`:'—'}</td>
         <td>${p.interval?`${p.interval.toLocaleString('pt-BR')}h`:'—'}</td>
@@ -5426,9 +5451,9 @@ async function syncFromGS({ silent = false } = {}){
               valorMostrado:  (ps.valorMostrado !== undefined && ps.valorMostrado !== null && String(ps.valorMostrado) !== '')
                                 ? ps.valorMostrado
                                 : (_ex.valorMostrado !== undefined ? _ex.valorMostrado : ''),
-              horasRodadas:   ps.horasRodadas  || _ex.horasRodadas   || '',
-              horasRestantes: ps.horasRestantes|| _ex.horasRestantes || '',
-              status:         ps.status        || _ex.status         || '',
+              horasRodadas:   pickVal(ps.horasRodadas,   _ex.horasRodadas),
+              horasRestantes: pickVal(ps.horasRestantes, _ex.horasRestantes),
+              status:         pickVal(ps.status,         _ex.status),
             };
             updParts++;
           });
@@ -5548,9 +5573,9 @@ async function syncFromGS({ silent = false } = {}){
                                ? ps.valorMostrado
                                : (ex.valorMostrado !== undefined && ex.valorMostrado !== null)
                                  ? ex.valorMostrado : '',
-              horasRodadas:  ps.horasRodadas  || ex.horasRodadas  || '',
-              horasRestantes:ps.horasRestantes|| ex.horasRestantes|| '',
-              status:        ps.status        || ex.status        || '',
+              horasRodadas:   pickVal(ps.horasRodadas,   ex.horasRodadas),
+              horasRestantes: pickVal(ps.horasRestantes, ex.horasRestantes),
+              status:         pickVal(ps.status,         ex.status),
             };
             updParts++;
           });
