@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ProperCare Manager · Gestão PGP v3.19</title>
+<title>ProperCare Manager · Gestão PGP v3.20</title>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <style>
@@ -455,6 +455,61 @@ tr:hover td{background:var(--gray-50)}
 .help-popover-body{font-size:12px;line-height:1.5;color:var(--text2)}
 .help-icon{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;margin-left:5px;border-radius:50%;border:1px solid var(--border2);background:white;font-size:10px;font-weight:700;cursor:pointer;color:var(--text3);vertical-align:middle;font-style:normal;flex-shrink:0;transition:background .15s,color .15s;font-family:'IBM Plex Sans',sans-serif}
 .help-icon:hover{background:var(--blue-light);color:var(--blue-mid);border-color:var(--blue-mid)}
+
+/* ── BADGES FONTE CATÁLOGO/CAMPO ── */
+.badge-catalog {
+  display:inline-flex;
+  align-items:center;
+  gap:3px;
+  background:#dcfce7;
+  color:#15803d;
+  border-radius:4px;
+  padding:2px 6px;
+  font-size:10px;
+  font-weight:700;
+  white-space:nowrap;
+  text-transform:uppercase;
+}
+.badge-machine {
+  display:inline-flex;
+  align-items:center;
+  gap:3px;
+  background:#fff3cd;
+  color:#d97706;
+  border-radius:4px;
+  padding:2px 6px;
+  font-size:10px;
+  font-weight:700;
+  white-space:nowrap;
+  text-transform:uppercase;
+}
+.catalog-search-toggle {
+  border:1px solid var(--border2);
+  background:white;
+  color:var(--text2);
+  border-radius:20px;
+  padding:5px 12px;
+  font-size:11px;
+  font-weight:700;
+  cursor:pointer;
+  font-family:'IBM Plex Sans',system-ui,sans-serif;
+}
+.catalog-search-toggle:hover { background:var(--gray-100); }
+.catalog-search-toggle.active {
+  background:var(--blue);
+  color:white;
+  border-color:var(--blue);
+}
+.search-section-separator {
+  margin:10px 0 8px;
+  padding-top:8px;
+  border-top:1px dashed var(--border2);
+  font-size:10px;
+  font-weight:700;
+  color:var(--text3);
+  text-transform:uppercase;
+  letter-spacing:.06em;
+}
 </style>
 </head>
 <body>
@@ -467,7 +522,7 @@ tr:hover td{background:var(--gray-50)}
       <div class="login-logo-mark">PC</div>
       <div class="login-logo-text">Proper Compressores</div>
     </div>
-    <div class="login-sub">ProperCare Manager · v3.19 — Acesso restrito</div>
+    <div class="login-sub">ProperCare Manager · v3.20 — Acesso restrito</div>
     <label class="login-label">Senha de acesso</label>
     <input class="login-input" type="password" id="loginInput" placeholder="••••••"
            maxlength="20" onkeydown="if(event.key==='Enter')loginEntrar()">
@@ -481,7 +536,7 @@ tr:hover td{background:var(--gray-50)}
     <div class="logo-mark">PC</div>
     <div class="logo-text">Proper Compressores</div>
     <div class="logo-sep"></div>
-    <div class="logo-sub">PCM v3.19</div>
+    <div class="logo-sub">PCM v3.20</div>
   </div>
   <nav class="header-nav">
     <button class="nav-btn active" onclick="showView('dashboard')" id="navDashboard">Dashboard</button>
@@ -2679,8 +2734,23 @@ function renderPreventivas(){
   }
 }
 
+// ── MODO DE BUSCA DO CATÁLOGO ─────────────────────────────────────────────
+const CATALOG_SEARCH_MODE_KEY = 'pcm_catalog_search_mode';
+
+function getCatalogSearchMode() {
+  const m = localStorage.getItem(CATALOG_SEARCH_MODE_KEY);
+  return m === 'model' ? 'model' : 'ref';
+}
+
+function catalogModelSearchKey(brand, model) {
+  return compactKey((brand || '') + ' ' + (model || ''));
+}
+
 // PCM-7: Card de consulta de peças — inserido no início de renderCatalog()
 function renderPartSearchCard() {
+  const mode = getCatalogSearchMode();
+  const isModel = mode === 'model';
+
   return `
     <div id="partSearchCard" style="background:white;border-radius:var(--radius);border:1px solid var(--border);margin-bottom:14px;overflow:hidden">
       <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
@@ -2688,9 +2758,17 @@ function renderPartSearchCard() {
         <span style="font-weight:600;font-size:13px">Consulta de Peças e Equivalências</span>
       </div>
       <div style="padding:12px 16px">
+        <div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap">
+          <button type="button"
+            class="catalog-search-toggle ${!isModel ? 'active' : ''}"
+            onclick="setCatalogSearchMode('ref')">🔎 Por referência</button>
+          <button type="button"
+            class="catalog-search-toggle ${isModel ? 'active' : ''}"
+            onclick="setCatalogSearchMode('model')">🏭 Por modelo</button>
+        </div>
         <div style="display:flex;gap:8px;margin-bottom:10px">
           <input type="text" id="partSearchInput"
-            placeholder="Referência OEM, similar, nome da peça ou modelo..."
+            placeholder="${isModel ? 'Marca e modelo: ex. Schulz SRP3010, Atlas GA30...' : 'Referência OEM, similar ou nome da peça...'}"
             style="flex:1;border:1.5px solid var(--border);border-radius:var(--radius);padding:8px 12px;font-size:13px;outline:none"
             oninput="renderPartSearchResults()"
             onkeydown="if(event.key==='Enter') renderPartSearchResults()" />
@@ -2701,12 +2779,106 @@ function renderPartSearchCard() {
     </div>`;
 }
 
+function setCatalogSearchMode(mode) {
+  localStorage.setItem(CATALOG_SEARCH_MODE_KEY, mode === 'model' ? 'model' : 'ref');
+  const card = document.getElementById('partSearchCard');
+  if (card) card.outerHTML = renderPartSearchCard();
+  requestAnimationFrame(() => {
+    const input = document.getElementById('partSearchInput');
+    if (input) input.focus();
+  });
+}
+
+function renderSourceBadge(source) {
+  if (source === 'catalog') return '<span class="badge-catalog">Catálogo</span>';
+  if (source === 'machine_parts') return '<span class="badge-machine">Campo</span>';
+  return '';
+}
+
+function getCatalogPartsFlat(model) {
+  if (!model) return [];
+  const direct = (model.directParts || []).map(p => ({
+    ...p,
+    scope: 'direct',
+    subName: '',
+    subCategory: '',
+    sourceLabel: 'Diretas'
+  }));
+  const sub = (model.subsystems || []).flatMap(s =>
+    (s.parts || []).map(p => ({
+      ...p,
+      scope: 'sub',
+      subName: s.name || '',
+      subCategory: s.category || '',
+      sourceLabel: s.name || 'Subsistema'
+    }))
+  );
+  return [...direct, ...sub];
+}
+
+function searchCatalogModelsLocal(query) {
+  const qKey = compactKey(query || '');
+  if (!qKey || qKey.length < 2) return [];
+
+  return (db.models || [])
+    .filter(m => {
+      const brand = m.brand || '';
+      const model = m.model || '';
+      const fullKey = catalogModelSearchKey(brand, model);
+      return fullKey.includes(qKey) || compactKey(brand).includes(qKey) || compactKey(model).includes(qKey);
+    })
+    .map(m => ({
+      modelId: m.id,
+      brand: m.brand || '',
+      model: m.model || '',
+      type: m.type || '',
+      power: m.power || '',
+      pressure: m.pressure || '',
+      parts: getCatalogPartsFlat(m)
+    }))
+    .slice(0, 20);
+}
+
+function renderModelSearchResults(query) {
+  const results = searchCatalogModelsLocal(query);
+  if (!results.length) {
+    return '<div style="font-size:12px;color:var(--text3);padding:8px 0">Nenhum modelo encontrado para "' + escHtml(query) + '".</div>';
+  }
+
+  let html = `<div style="font-size:11px;color:var(--text3);margin-bottom:8px">${results.length} modelo(s) para <strong>${escHtml(query)}</strong></div>`;
+
+  results.forEach(r => {
+    const partsCount = (r.parts || []).length;
+    const simsCount = (r.parts || []).reduce((acc, p) => acc + ((p.similarities || []).length), 0);
+    html += `
+      <div style="border:1px solid var(--border);border-radius:var(--radius);margin-bottom:8px;overflow:hidden;background:white">
+        <div style="padding:8px 12px;display:flex;align-items:center;justify-content:space-between;gap:8px">
+          <div>
+            <div style="font-weight:700;font-size:12px">${escHtml(r.brand)} ${escHtml(r.model)}</div>
+            <div style="font-size:10px;color:var(--text2)">
+              ${r.type ? escHtml(r.type) + ' · ' : ''}${r.power ? escHtml(r.power) + ' · ' : ''}${r.pressure ? escHtml(r.pressure) + ' · ' : ''}${partsCount} peça(s) · ${simsCount} similar(es)
+            </div>
+          </div>
+          <button class="btn btn-secondary btn-xs" onclick="selectModel('${escJs(r.modelId)}');showView('catalog')">Ver modelo</button>
+        </div>
+      </div>`;
+  });
+
+  return html;
+}
+
 // PCM-8: Renderiza os resultados da consulta de peças
 function renderPartSearchResults() {
   const q = (document.getElementById('partSearchInput')?.value || '').trim();
   const el = document.getElementById('partSearchResults');
   if (!el) return;
   if (!q || q.length < 2) { el.innerHTML = ''; return; }
+
+  const mode = getCatalogSearchMode();
+  if (mode === 'model') {
+    el.innerHTML = renderModelSearchResults(q);
+    return;
+  }
 
   const results = searchPartsAndApplications(q);
   if (!results.length) {
@@ -2741,7 +2913,7 @@ function renderPartSearchResults() {
       <div style="border:1px solid var(--border);border-radius:var(--radius);margin-bottom:8px;overflow:hidden">
         <div style="padding:8px 12px;background:var(--blue-pale);display:flex;align-items:center;justify-content:space-between;gap:8px">
           <div>
-            <div style="font-weight:700;font-size:12px">${escHtml(g.partName)} <span style="font-weight:400;color:var(--text3)">· ref: ${escHtml(g.oemRef || '—')}</span></div>
+            <div style="font-weight:700;font-size:12px">${escHtml(g.partName)} ${renderSourceBadge('catalog')} <span style="font-weight:400;color:var(--text3)">· ref: ${escHtml(g.oemRef || '—')}</span></div>
             <div style="font-size:10px;color:var(--text2)">${escHtml(g.brand)} ${escHtml(g.model)}${g.subsystem ? ' · ' + escHtml(g.subsystem) : ''}${g.slot ? ' · slot: ' + escHtml(g.slot) : ''}</div>
           </div>
           <button class="btn btn-secondary btn-xs" onclick="selectModel('${g.modelId}');showView('catalog')">Ver modelo</button>
@@ -2757,7 +2929,7 @@ function renderPartSearchResults() {
 
   if (orphanMachines.length) {
     html += `<div style="border:1px solid #fcd9a0;border-radius:var(--radius);padding:8px 12px;margin-bottom:8px;background:#fff9f0">
-      <div style="font-size:11px;font-weight:700;color:#d97706;margin-bottom:4px">⚠ Peças em campo não catalogadas</div>
+      <div style="font-size:11px;font-weight:700;color:#d97706;margin-bottom:4px">⚠ Peças em campo não catalogadas ${renderSourceBadge('machine_parts')}</div>
       ${orphanMachines.map(m => `<div style="font-size:11px;color:var(--text2)">${escHtml(m.client)} · ${escHtml(m.brand)} ${escHtml(m.model)} · ref: ${escHtml(m.oemRef || '—')}
         <button class="btn btn-secondary btn-xs" style="margin-left:4px" onclick="openMachineDetail('${m.machineId}')">Abrir</button></div>`).join('')}
     </div>`;
@@ -2820,6 +2992,22 @@ function searchPartsAndApplications(query) {
 
   const idx = buildPartReferenceIndex();
   const byRef = idx[n] || [];
+
+  const byPrefix = [];
+  if (n.length >= 3) {
+    Object.entries(idx).forEach(([refNorm, entries]) => {
+      if (!refNorm || refNorm.length < 3 || refNorm === n) return;
+      const isPrefix = refNorm.startsWith(n) || n.startsWith(refNorm);
+      if (isPrefix) {
+        entries.forEach(e => byPrefix.push({
+          ...e,
+          matchType: e.matchType || 'prefix',
+          score: e.score || 75
+        }));
+      }
+    });
+  }
+
   const byName = [];
   const normName = String(query || '').trim().toLowerCase()
     .normalize('NFD').replace(/[̀-ͯ]/g, '');
@@ -2848,7 +3036,7 @@ function searchPartsAndApplications(query) {
   }
 
   const seen = new Set();
-  return [...byRef, ...byName].filter(e => {
+  return [...byRef, ...byPrefix, ...byName].filter(e => {
     const k = (e.partId || '') + '::' + (e.modelId || '') + '::' + (e.machineId || '');
     if (seen.has(k)) return false;
     seen.add(k); return true;
