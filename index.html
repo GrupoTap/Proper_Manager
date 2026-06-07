@@ -544,6 +544,7 @@ tr:hover td{background:var(--gray-50)}
     <button class="nav-btn" onclick="showView('machines')" id="navMachines">Máquinas</button>
     <button class="nav-btn" onclick="showView('catalog')" id="navCatalog">Catálogo</button>
     <button class="nav-btn" onclick="showView('clients')" id="navClients">Clientes</button>
+    <button class="nav-btn" onclick="showView('estoque')" id="navEstoque">Estoque</button>
     <button class="nav-btn" onclick="showView('config')" id="navConfig">Configurações</button>
   </nav>
   <div class="header-right">
@@ -611,6 +612,8 @@ tr:hover td{background:var(--gray-50)}
       </div>
       <div id="clientsBody"></div>
     </div>
+    <!-- ESTOQUE VIEW -->
+    <div id="viewEstoque" style="display:none"></div>
     <!-- CONFIG VIEW -->
     <div id="viewConfig" style="display:none"></div>
   </main>
@@ -2400,7 +2403,7 @@ async function auditCreateBackup() {
 // ═══════════════════════════════════════════════════════════
 function showView(v){
   currentView=v;
-  const allViews=['dashboard','preventivas','catalog','machines','clients','config'];
+  const allViews=['dashboard','preventivas','catalog','machines','clients','estoque','config'];
   allViews.forEach(x=>{
     const el=document.getElementById('view'+x.charAt(0).toUpperCase()+x.slice(1));
     if(el) el.style.display=x===v?'':'none';
@@ -2427,6 +2430,8 @@ function showView(v){
     document.getElementById('sidebarNewLabel').textContent='Novo cliente';
     document.getElementById('sidebarNewBtn').onclick=()=>openModalClient();
     renderClients();
+  } else if(v==='estoque'){
+    renderEstoque();
   } else if(v==='config'){
     renderConfigStats();
     if(gsUrl) document.getElementById('gsUrlInput').value=gsUrl;
@@ -4803,6 +4808,348 @@ As referências de peças cadastradas serão importadas.`)) return;
 
 let _machFilter=''; // filtro de cliente ativo
 let _machModelFilter=''; // filtro de modelo vindo do catálogo
+let _estoqueResult = null;
+
+// ═══════════════════════════════════════════════════════════
+// ESTOQUE VIEW
+// ═══════════════════════════════════════════════════════════
+function renderEstoque(){
+  const el=document.getElementById('viewEstoque');
+  if(!el) return;
+  el.innerHTML=`
+    <div class="content-header">
+      <div>
+        <div class="content-title">Sugestão de Estoque</div>
+        <div class="content-sub">Peças que vencem nos próximos N dias, agrupadas por referência</div>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap">
+      <label style="font-size:13px;font-weight:600;color:var(--text2)">Horizonte:</label>
+      <input type="number" id="estoqueHorizonte" value="30" min="1" max="365"
+        style="width:80px;padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:13px;font-family:'IBM Plex Sans',sans-serif">
+      <span style="font-size:13px;color:var(--text2)">dias</span>
+      <button class="btn btn-primary" onclick="calcularEstoque()">Calcular</button>
+      <button class="btn btn-secondary" id="btnEstoquePDF" onclick="gerarPDFEstoque()" disabled>⬇ Exportar PDF</button>
+    </div>
+    <div id="estoqueResultado"></div>`;
+}
+
+function calcularEstoque(){
+  const horizonte = parseInt(document.getElementById('estoqueHorizonte').value) || 30;
+  const resultados = [];
+  const semHpw = [];
+
+  (db.machines || []).forEach(eq => {
+    const hpw = parseInt(eq.hpw) || 0;
+    if(hpw === 0){
+      semHpw.push(eq);
+      return;
+    }
+    const horasPorDia = hpw / 7;
+    const horasHorizonte = horasPorDia * horizonte;
+    const parts = _getEffectiveParts(eq);
+
+    parts.forEach(part => {
+      if(part.na === true) return;
+
+      let horasRestantes;
+      if(hasVal(part.horasRestantes)){
+        horasRestantes = parseFloat(part.horasRestantes);
+      } else if(hasVal(part.lastChange) && parseInt(part.interval) > 0){
+        const lastChange = parseInt(part.lastChange);
+        const interval = parseInt(part.interval);
+        const hourTotal = parseInt(eq.hourTotal) || 0;
+        horasRestantes = (lastChange + interval) - hourTotal;
+      } else {
+        return;
+      }
+
+      if(horasRestantes <= horasHorizonte){
+        const diasRestantes = Math.round(horasRestantes / horasPorDia);
+        const ref = part.ref || '—';
+        const clientMatch = (db.clients || []).find(c => clientKey(c.nome) === clientKey(eq.client || ''));
+        resultados.push({
+          partId:         part.id,
+          partName:       part.name,
+          ref:            ref,
+          horasRestantes: horasRestantes,
+          diasRestantes:  diasRestantes,
+          machineId:      eq.id,
+          client:         eq.client  || '—',
+          brand:          eq.brand   || '—',
+          model:          eq.model   || '—',
+          serial:         eq.serial  || '—',
+          tag:            eq.tag     || '—',
+          nextVisit:      clientMatch?.nextVisit || ''
+        });
+      }
+    });
+  });
+
+  // Agrupar por ref normalizada
+  const grupoMap = {};
+  resultados.forEach(r => {
+    const key = normalizeRef(r.ref);
+    if(!grupoMap[key]){
+      grupoMap[key] = { ref: r.ref, partName: r.partName, maquinas: [] };
+    }
+    grupoMap[key].maquinas.push(r);
+  });
+
+  const grupos = Object.values(grupoMap).map(g => {
+    g.maquinas.sort((a,b) => a.diasRestantes - b.diasRestantes);
+    g.menorDias = g.maquinas[0].diasRestantes;
+    return g;
+  });
+  grupos.sort((a,b) => a.menorDias - b.menorDias);
+
+  _estoqueResult = { grupos, semHpw, horizonte, geradoEm: new Date() };
+  renderEstoqueResultado(_estoqueResult);
+
+  const btn = document.getElementById('btnEstoquePDF');
+  if(btn) btn.disabled = false;
+}
+
+function _urgenciaBadgeHtml(dias){
+  if(dias <= 0)  return `<span style="background:#fee2e2;color:#b91c1c;font-weight:700;padding:2px 8px;border-radius:12px;font-size:11px">Vencida</span>`;
+  if(dias <= 14) return `<span style="background:#fef3c7;color:#92400e;font-weight:700;padding:2px 8px;border-radius:12px;font-size:11px">${dias}d</span>`;
+  if(dias <= 30) return `<span style="background:#fef9c3;color:#713f12;font-weight:700;padding:2px 8px;border-radius:12px;font-size:11px">${dias}d</span>`;
+  return `<span style="background:var(--blue-light);color:var(--blue-mid);font-weight:700;padding:2px 8px;border-radius:12px;font-size:11px">${dias}d</span>`;
+}
+
+function renderEstoqueResultado(result){
+  const el = document.getElementById('estoqueResultado');
+  if(!el) return;
+
+  if(!result || result.grupos.length === 0){
+    el.innerHTML=`<div style="text-align:center;padding:40px;color:var(--text3)">
+      Nenhuma peça vence nos próximos ${result ? result.horizonte : '?'} dias com os dados disponíveis.
+    </div>`;
+    _renderSemHpwRodape(el, result ? result.semHpw : []);
+    return;
+  }
+
+  const rows = result.grupos.map((g, i) => {
+    const bg = i % 2 === 0 ? '#ffffff' : 'var(--gray-50)';
+    const subLinhas = g.maquinas.map(m => {
+      const nv = m.nextVisit ? ` · Próx.visita: ${escHtml(m.nextVisit)}` : '';
+      const diasLabel = m.diasRestantes <= 0 ? 'Vencida' : `${m.diasRestantes}d`;
+      return `<tr style="background:${bg}">
+        <td colspan="5" style="padding:2px 16px 2px 32px;font-size:11px;color:var(--text2)">
+          ↳ ${escHtml(m.client)} · ${escHtml(m.brand)} ${escHtml(m.model)} · S/N ${escHtml(m.serial)} · TAG ${escHtml(m.tag)} · ${diasLabel}${nv}
+        </td>
+      </tr>`;
+    }).join('');
+
+    return `<tr style="background:${bg}">
+      <td style="padding:8px 12px;font-weight:600;font-size:12px;font-family:'IBM Plex Mono',monospace">${escHtml(g.ref)}</td>
+      <td style="padding:8px 12px;font-size:12px">${escHtml(g.partName)}</td>
+      <td style="padding:8px 12px;text-align:center;font-size:12px">${g.maquinas.length}</td>
+      <td style="padding:8px 12px;text-align:center">${_urgenciaBadgeHtml(g.menorDias)}</td>
+      <td style="padding:8px 12px;font-size:11px;color:var(--text2)">${g.maquinas.map(m=>`${escHtml(m.client)} · ${escHtml(m.model)}`).join(', ')}</td>
+    </tr>${subLinhas}`;
+  }).join('');
+
+  let html = `<div class="table-wrap"><table style="width:100%;border-collapse:collapse">
+    <thead><tr style="background:var(--blue);color:white">
+      <th style="padding:8px 12px;text-align:left;font-size:11px;font-weight:600">Referência</th>
+      <th style="padding:8px 12px;text-align:left;font-size:11px;font-weight:600">Peça</th>
+      <th style="padding:8px 12px;text-align:center;font-size:11px;font-weight:600">Qtd. máquinas</th>
+      <th style="padding:8px 12px;text-align:center;font-size:11px;font-weight:600">Urgência (menor prazo)</th>
+      <th style="padding:8px 12px;text-align:left;font-size:11px;font-weight:600">Máquinas</th>
+    </tr></thead>
+    <tbody>${rows}</tbody>
+  </table></div>`;
+
+  el.innerHTML = html;
+  _renderSemHpwRodape(el, result.semHpw);
+}
+
+function _renderSemHpwRodape(container, semHpw){
+  if(!semHpw || semHpw.length === 0) return;
+  const lista = semHpw.map(eq => `${escHtml(eq.client||'?')} · ${escHtml(eq.brand||'')} ${escHtml(eq.model||'')}`).join('; ');
+  const div = document.createElement('div');
+  div.style.cssText = 'margin-top:16px;padding:10px 14px;background:var(--orange-light);border-left:3px solid var(--orange);border-radius:var(--radius);font-size:12px;color:#92400e';
+  div.textContent = `${semHpw.length} máquina(s) ignorada(s) por não terem h/semana configurado: ${lista}`;
+  container.appendChild(div);
+}
+
+function gerarPDFEstoque(){
+  if(!_estoqueResult) return;
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit:'mm', format:'a4' });
+
+  function ltxEst(txt){
+    if(!txt) return '';
+    return String(txt)
+      .replace(/[‘’]/g,"'")
+      .replace(/[“”]/g,'"')
+      .replace(/[–—]/g,'-')
+      .replace(/[\u{1F300}-\u{1FFFF}]/gu,'')
+      .replace(/[^\x09\x0A\x0D\x20-\xFF]/g,' ')
+      .replace(/\s+/g,' ')
+      .trim();
+  }
+
+  const EST_AZUL  = [26,  58, 107];
+  const EST_AZUL2 = [46,  91, 168];
+  const EST_DARK  = [30,  40,  55];
+  const EST_WHITE = [255,255,255];
+  const EST_LGRAY = [240,244,250];
+  const EST_TEXT2 = [100,130,160];
+  const EST_RED   = [220,  38,  38];
+  const EST_ORG   = [234, 109,   0];
+  const EST_YEL   = [180, 120,   0];
+
+  const pageW = 210;
+  const marginL = 12, marginR = 12;
+  const contentW = pageW - marginL - marginR;
+  let y = 0;
+  let pageNum = 1;
+
+  const { grupos, semHpw, horizonte, geradoEm } = _estoqueResult;
+  const totalRefs = grupos.length;
+  const totalMaqs = grupos.reduce((a,g)=>a+g.maquinas.length, 0);
+  const dataStr = `${String(geradoEm.getDate()).padStart(2,'0')}/${String(geradoEm.getMonth()+1).padStart(2,'0')}/${geradoEm.getFullYear()} ${String(geradoEm.getHours()).padStart(2,'0')}:${String(geradoEm.getMinutes()).padStart(2,'0')}`;
+
+  function desenharCabecalho(){
+    doc.setFillColor(...EST_AZUL);
+    doc.rect(0, 0, pageW, 18, 'F');
+    doc.setFillColor(0, 180, 200);
+    doc.rect(0, 18, pageW, 1.5, 'F');
+    doc.setFont('helvetica','bold');
+    doc.setFontSize(10);
+    doc.setTextColor(...EST_WHITE);
+    doc.text(ltxEst('Proper Compressores - Sugestao de Estoque'), marginL, 11);
+    doc.setFont('helvetica','normal');
+    doc.setFontSize(7);
+    doc.text(ltxEst(`Gerado em ${dataStr} - Pag ${pageNum}`), pageW - marginR, 11, {align:'right'});
+    y = 22;
+  }
+
+  function checarY(h){
+    if(y + h > 275){
+      doc.addPage();
+      pageNum++;
+      desenharCabecalho();
+    }
+  }
+
+  desenharCabecalho();
+
+  // Sumário
+  doc.setFont('helvetica','normal');
+  doc.setFontSize(8);
+  doc.setTextColor(...EST_DARK);
+  checarY(8);
+  doc.text(ltxEst(`Horizonte: ${horizonte} dias  |  ${totalRefs} pecas/refs  |  ${totalMaqs} maquinas com vencimentos  |  ${semHpw.length} maquinas sem h/semana`), marginL, y);
+  y += 8;
+
+  // Cabeçalho da tabela
+  const colW = [28, 55, 20, 30, contentW - 133];
+  const colX = [marginL, marginL+28, marginL+83, marginL+103, marginL+133];
+  const headers = ['Ref','Peca','Maq.','Urgencia','Maquinas'];
+
+  function desenharHeaderTabela(){
+    checarY(8);
+    doc.setFillColor(...EST_AZUL);
+    doc.rect(marginL, y, contentW, 7, 'F');
+    doc.setFont('helvetica','bold');
+    doc.setFontSize(7);
+    doc.setTextColor(...EST_WHITE);
+    headers.forEach((h,i)=>{ doc.text(ltxEst(h), colX[i]+1, y+4.5); });
+    y += 7;
+  }
+
+  desenharHeaderTabela();
+
+  grupos.forEach((g, gi) => {
+    const isAlt = gi % 2 === 0;
+    checarY(7);
+    if(isAlt){
+      doc.setFillColor(...EST_LGRAY);
+    } else {
+      doc.setFillColor(...EST_WHITE);
+    }
+    doc.rect(marginL, y, contentW, 7, 'F');
+
+    doc.setFont('helvetica','bold');
+    doc.setFontSize(7);
+    doc.setTextColor(...EST_DARK);
+    doc.text(ltxEst(g.ref), colX[0]+1, y+4.5);
+
+    doc.setFont('helvetica','normal');
+    doc.text(ltxEst(g.partName), colX[1]+1, y+4.5);
+
+    doc.setFont('helvetica','bold');
+    doc.setTextColor(...EST_AZUL2);
+    doc.text(String(g.maquinas.length), colX[2]+1, y+4.5);
+
+    // Urgência colorida
+    const d = g.menorDias;
+    let urgColor;
+    let urgText;
+    if(d <= 0){  urgColor=EST_RED;  urgText='Vencida'; }
+    else if(d<=14){ urgColor=EST_ORG; urgText=`${d}d`; }
+    else if(d<=30){ urgColor=EST_YEL; urgText=`${d}d`; }
+    else {          urgColor=EST_AZUL2; urgText=`${d}d`; }
+    doc.setTextColor(...urgColor);
+    doc.setFont('helvetica','bold');
+    doc.text(urgText, colX[3]+1, y+4.5);
+
+    doc.setTextColor(...EST_DARK);
+    doc.setFont('helvetica','normal');
+    const maqSummary = g.maquinas.map(m=>ltxEst(`${m.client} ${m.model}`)).join(', ');
+    doc.text(maqSummary, colX[4]+1, y+4.5, {maxWidth: colW[4]-2});
+    y += 7;
+
+    // Sub-linhas de máquinas
+    g.maquinas.forEach(m => {
+      checarY(5);
+      doc.setFillColor(...(isAlt ? EST_LGRAY : EST_WHITE));
+      doc.rect(marginL, y, contentW, 5, 'F');
+      doc.setFont('helvetica','normal');
+      doc.setFontSize(7);
+      doc.setTextColor(...EST_TEXT2);
+      const nv = m.nextVisit ? ` - Prox.visita: ${m.nextVisit}` : ' - sem data';
+      const diasLabel = m.diasRestantes <= 0 ? 'Vencida' : `${m.diasRestantes}d`;
+      const linha = ltxEst(`  -> ${m.client} - ${m.brand} ${m.model} - S/N ${m.serial} - TAG ${m.tag} - ${diasLabel}${nv}`);
+      doc.text(linha, colX[0]+4, y+3.5, {maxWidth: contentW-6});
+      y += 5;
+    });
+  });
+
+  // Rodapé
+  checarY(20);
+  y += 4;
+  doc.setDrawColor(...EST_AZUL);
+  doc.setLineWidth(0.3);
+  doc.line(marginL, y, pageW-marginR, y);
+  y += 4;
+
+  if(semHpw.length > 0){
+    doc.setFont('helvetica','bold');
+    doc.setFontSize(7);
+    doc.setTextColor(...EST_DARK);
+    doc.text(ltxEst(`Maquinas sem h/semana configurado (${semHpw.length}):`), marginL, y);
+    y += 5;
+    doc.setFont('helvetica','normal');
+    doc.setTextColor(...EST_TEXT2);
+    const listaStr = semHpw.map(eq=>ltxEst(`${eq.client||'?'} - ${eq.brand||''} ${eq.model||''}`)).join('; ');
+    doc.text(listaStr, marginL, y, {maxWidth: contentW});
+    y += 6;
+  }
+
+  doc.setFont('helvetica','italic');
+  doc.setFontSize(6.5);
+  doc.setTextColor(...EST_TEXT2);
+  doc.text(ltxEst('Gerado por ProperCare PCM v20 - Proper Compressores - uso interno'), marginL, y);
+
+  const hoje = new Date();
+  const fn = `ProperCare_Estoque_${hoje.getFullYear()}-${String(hoje.getMonth()+1).padStart(2,'0')}-${String(hoje.getDate()).padStart(2,'0')}.pdf`;
+  doc.save(fn);
+  toast('PDF exportado com sucesso!', 'success');
+}
 
 function renderMachines(){
   const el=document.getElementById('viewMachines');
