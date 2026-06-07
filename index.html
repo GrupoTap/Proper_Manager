@@ -4338,7 +4338,8 @@ function _getEffectiveParts(eq){
     lastChange: (stored[dp.id] && 'lastChange' in stored[dp.id]) ? stored[dp.id].lastChange : null,
     ref: stored[dp.id]?.ref || '',
     na: stored[dp.id]?.na || false,
-    valorMostrado: stored[dp.id]?.valorMostrado || '',
+    valorMostrado: (stored[dp.id]?.valorMostrado !== undefined && stored[dp.id]?.valorMostrado !== null)
+                     ? stored[dp.id].valorMostrado : '',
     contador: stored[dp.id]?.contador || '',
     horasRodadas: stored[dp.id]?.horasRodadas || '',
     horasRestantes: stored[dp.id]?.horasRestantes || '',
@@ -5412,12 +5413,20 @@ async function syncFromGS({ silent = false } = {}){
         if(sm.parts && typeof sm.parts === 'object'){
           if(!eq.parts) eq.parts = {};
           Object.entries(sm.parts).forEach(([pid, ps])=>{
-            eq.parts[pid]={
-              name: ps.name || pid,
-              lastChange: parseInt(ps.lastChange) || 0,
-              interval: parseInt(ps.interval) || 2000,
-              ref: ps.ref || '',
-              na: !!ps.na
+            const _ex = eq.parts[pid] || {};
+            eq.parts[pid] = {
+              name:           ps.name          || _ex.name          || pid,
+              lastChange:     parseInt(ps.lastChange) || 0,
+              interval:       parseInt(ps.interval)  || 2000,
+              ref:            ps.ref           || _ex.ref            || '',
+              na:             ps.na !== undefined ? !!ps.na : !!_ex.na,
+              contador:       ps.contador      || _ex.contador       || '',
+              valorMostrado:  (ps.valorMostrado !== undefined && ps.valorMostrado !== null && String(ps.valorMostrado) !== '')
+                                ? ps.valorMostrado
+                                : (_ex.valorMostrado !== undefined ? _ex.valorMostrado : ''),
+              horasRodadas:   ps.horasRodadas  || _ex.horasRodadas   || '',
+              horasRestantes: ps.horasRestantes|| _ex.horasRestantes || '',
+              status:         ps.status        || _ex.status         || '',
             };
             updParts++;
           });
@@ -5533,7 +5542,10 @@ async function syncFromGS({ silent = false } = {}){
               na: ps.na!==undefined ? !!ps.na : !!ex.na,
               // v1.5: preservar campos calculados
               contador:      ps.contador      || ex.contador      || '',
-              valorMostrado: ps.valorMostrado || ex.valorMostrado || '',
+              valorMostrado: (ps.valorMostrado !== undefined && ps.valorMostrado !== null && String(ps.valorMostrado) !== '')
+                               ? ps.valorMostrado
+                               : (ex.valorMostrado !== undefined && ex.valorMostrado !== null)
+                                 ? ex.valorMostrado : '',
               horasRodadas:  ps.horasRodadas  || ex.horasRodadas  || '',
               horasRestantes:ps.horasRestantes|| ex.horasRestantes|| '',
               status:        ps.status        || ex.status        || '',
