@@ -4377,8 +4377,10 @@ function _buildPartsReadTable(eq, hourTotal, hpw){
         st.level==='vencido' ? `<span class="badge-vencido">⛔ ${st.label}</span>` :
         st.level==='na' ? '<span class="badge-na">N/A</span>' :
         '<span class="badge-sem">Sem dados</span>';
-      return `<tr>
-        <td><div class="td-name">${p.name}</div></td>
+      const trStyle = p.na ? ' style="opacity:0.45;text-decoration:line-through"' : '';
+      const trClass = p.na ? ' class="parts-na-row"' : '';
+      return `<tr${trClass}${trStyle}>
+        <td><div class="td-name">${p.name}${p.na?' <span style="font-size:10px;color:#9ca3af;font-style:italic">(N/A)</span>':''}</div></td>
         <td>${p.ref||'—'}</td>
         <td>${p.valorMostrado!==undefined&&p.valorMostrado!==null&&String(p.valorMostrado)!==''?`${p.valorMostrado}h`:'—'}</td>
         <td>${p.contador||'—'}</td>
