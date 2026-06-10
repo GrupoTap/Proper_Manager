@@ -1004,8 +1004,18 @@ tr:hover td{background:var(--gray-50)}
         <input class="form-input" id="clCnpj" placeholder="ex: 11.863.418/0001-49">
       </div>
       <div class="form-group">
-        <label class="form-label">Cidade</label>
-        <input class="form-input" id="clCidade" placeholder="ex: Cláudio / MG">
+        <label class="form-label">Cidade <span>opcional</span></label>
+        <input class="form-input" id="clCidade" placeholder="ex: Divinópolis">
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label">Endereço <span>opcional</span></label>
+        <input class="form-input" id="clEndereco" placeholder="ex: Rua das Flores, 123 – Centro">
+      </div>
+      <div class="form-group">
+        <label class="form-label">UF <span>opcional</span></label>
+        <input class="form-input" id="clUF" placeholder="ex: MG" maxlength="2" style="text-transform:uppercase">
       </div>
     </div>
     <div class="form-row">
@@ -1992,10 +2002,12 @@ function openModalClient(id){
     document.getElementById('clAlerta').value=c.antecedencia_alerta_dias||30;
     document.getElementById('clDrive').value=c.drive_url||'';
     document.getElementById('clObs').value=c.observacoes||'';
+    document.getElementById('clEndereco').value=c.endereco||'';
+    document.getElementById('clUF').value=c.uf||'';
   } else {
     document.getElementById('modalClientTitle').textContent='Novo cliente';
     document.getElementById('dupClientAlert')?.classList.remove('show');
-    ['clNome','clCnpj','clCidade','clTelefone','clEmail','clDrive','clObs'].forEach(f=>document.getElementById(f).value='');
+    ['clNome','clCnpj','clCidade','clEndereco','clUF','clTelefone','clEmail','clDrive','clObs'].forEach(f=>document.getElementById(f).value='');
     document.getElementById('clAlerta').value=30;
   }
   openModal('modalClient');
@@ -2016,6 +2028,8 @@ function saveClient(){
     antecedencia_alerta_dias: parseInt(document.getElementById('clAlerta').value)||30,
     drive_url:  document.getElementById('clDrive').value.trim(),
     observacoes:document.getElementById('clObs').value.trim(),
+    endereco:   document.getElementById('clEndereco').value.trim(),
+    uf:         document.getElementById('clUF').value.trim().toUpperCase(),
     tipoRegistro: 'PRODUCAO',
     updatedAt:  new Date().toISOString()
   };
@@ -5536,7 +5550,7 @@ function renderClients(){
                 </div>
               </div>
             </td>
-            <td style="font-size:11px;color:var(--text2)">${c.cidade||'—'}</td>
+            <td style="font-size:11px;color:var(--text2)">${[c.cidade, c.uf].filter(Boolean).join(' / ')||'—'}${c.endereco?`<div style="font-size:10px;color:var(--text3)">${c.endereco}</div>`:''}</td>
             <td style="font-size:11px">
               ${c.telefone?`<div>📞 ${c.telefone}</div>`:''}
               ${c.email?`<div><a href="mailto:${c.email}" style="color:var(--blue-mid)">✉ ${c.email}</a></div>`:''}
@@ -5546,7 +5560,7 @@ function renderClients(){
             <td style="text-align:center">
               ${eqs.length?`<span style="font-weight:700;color:var(--blue-mid)">${eqs.length}</span>
                 <button class="btn btn-secondary btn-xs" style="margin-left:5px" onclick="_machFilter='${c.nome.replace(/'/g,"\\'")}';showView('machines')" title="Ver máquinas deste cliente">Ver →</button>`
-                :'<span style="color:var(--text3)">—</span>'}
+                :`<button class="btn btn-primary btn-xs" onclick="_machFilter='${c.nome.replace(/'/g,"\\'")}';showView('machines');openModalMachine()" title="Cadastrar primeira máquina deste cliente">+ Máquina</button>`}
             </td>
             <td style="text-align:center">
               ${c.antecedencia_alerta_dias?`<span class="client-alerta-badge">🔔 ${c.antecedencia_alerta_dias}d</span>`:'<span style="color:var(--text3)">—</span>'}
