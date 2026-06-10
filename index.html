@@ -199,6 +199,7 @@ tr:hover td{background:var(--gray-50)}
 .form-label span{font-weight:400;color:var(--text3);text-transform:none;letter-spacing:0;font-size:10px;margin-left:4px}
 .form-input,.form-select,.form-textarea{width:100%;background:var(--gray-50);border:1px solid var(--border2);border-radius:var(--radius);padding:7px 10px;font-size:12px;color:var(--text);font-family:'IBM Plex Sans',sans-serif;outline:none;transition:border-color .15s}
 .form-input:focus,.form-select:focus,.form-textarea:focus{border-color:var(--blue-mid);background:white}
+.form-input::placeholder,.form-textarea::placeholder{color:var(--text3);opacity:1}
 .form-textarea{resize:vertical;min-height:60px}
 .form-hint{font-size:10px;color:var(--text3);margin-top:2px}
 
@@ -4012,6 +4013,21 @@ function openModalMachine(id=null){
     fields.forEach(k=>{const el=document.getElementById(k);if(el)el.value=''});
     ['mcYear','mcHour','mcHpw','mcLastVisit','mcNextVisit'].forEach(k=>{const el=document.getElementById(k);if(el)el.value=''});
     document.getElementById('mcType').value='Compressor Parafuso';
+    // Pré-preencher dados do cliente se houver filtro de cliente ativo
+    if(_machFilter && db.clients){
+      const hitC=db.clients.find(c=>clientKey(c.nome)===clientKey(_machFilter));
+      if(hitC){
+        document.getElementById('mcClient').value=hitC.nome||'';
+        const mapC={mcBranch:'branch',mcCnpj:'cnpj',mcContact:'contact',mcPhone:'phone',mcEmail:'email',mcCity:'city',mcDriveLink:'driveLink'};
+        Object.entries(mapC).forEach(([elId,prop])=>{
+          const el=document.getElementById(elId);
+          if(el&&hitC[prop])el.value=hitC[prop];
+        });
+      } else {
+        // Filtro ativo mas cliente não encontrado em db.clients — preencher só o nome
+        document.getElementById('mcClient').value=_machFilter;
+      }
+    }
   }
   openModal('modalMachine');
   _captureFormSnapshot('modalMachine');
