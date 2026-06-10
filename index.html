@@ -2008,11 +2008,81 @@ let editClientId=null;
 let _pendingClientMergeSourceId = null;
 let _pendingClientMergeSourceName = '';
 
+// ─── Helpers de normalização de cliente ──────────────────────────────────────
+function getClientField(c) {
+  for (let i = 1; i < arguments.length; i++) {
+    const v = c && c[arguments[i]];
+    if (v !== undefined && v !== null && String(v).trim() !== '') {
+      return String(v).trim();
+    }
+  }
+  return '';
+}
+
+function normalizeClientObject(c) {
+  const out = Object.assign({}, c || {});
+  out.nome       = getClientField(out, 'nome', 'name', 'Nome');
+  out.cnpj       = getClientField(out, 'cnpj', 'CNPJ');
+  out.cidade     = getClientField(out, 'cidade', 'city', 'Cidade');
+  out.telefone   = getClientField(out, 'telefone', 'phone', 'Telefone');
+  out.email      = getClientField(out, 'email', 'Email');
+  out.drive_url  = getClientField(out, 'drive_url', 'driveLink', 'Drive_URL');
+  out.observacoes= getClientField(out, 'observacoes', 'obs', 'Observações');
+  out.endereco   = getClientField(out, 'endereco', 'Endereco');
+  out.uf         = getClientField(out, 'uf', 'UF').toUpperCase();
+  out.branch     = getClientField(out, 'branch', 'filial', 'Filial');
+  out.filial     = out.branch;
+  out.contact    = getClientField(out, 'contact', 'contato', 'Contato');
+  out.contato    = out.contact;
+  out.nextVisit  = getClientField(out, 'nextVisit', 'prox_visita', 'proxVisita', 'Prox_Visita');
+  out.prox_visita= out.nextVisit;
+  out.lastVisit  = getClientField(out, 'lastVisit', 'ult_visita', 'ultVisita', 'Ult_Visita');
+  out.ult_visita = out.lastVisit;
+  return out;
+}
+
+function fillClientMissingFields(target, source) {
+  const s = normalizeClientObject(source);
+  const fields = [
+    'cnpj', 'cidade', 'telefone', 'email', 'drive_url', 'observacoes',
+    'endereco', 'uf', 'branch', 'filial', 'contact', 'contato',
+    'lastVisit', 'ult_visita', 'nextVisit', 'prox_visita'
+  ];
+  let changed = false;
+  fields.forEach(function(k) {
+    if (!target[k] && s[k]) { target[k] = s[k]; changed = true; }
+  });
+  return changed;
+}
+
+function buildClientViewModel(client) {
+  const out = normalizeClientObject(client);
+  const ck = clientKey(out.nome || '');
+  if (!ck) return out;
+  (db.machines || []).forEach(function(m) {
+    if (clientKey(m.client || '') !== ck) return;
+    fillClientMissingFields(out, {
+      cnpj:      m.cnpj,
+      cidade:    m.city  || m.cidade,
+      telefone:  m.phone || m.telefone,
+      email:     m.email,
+      drive_url: m.driveLink || m.drive_url,
+      branch:    m.branch,
+      contact:   m.contact,
+      lastVisit: m.lastVisit,
+      nextVisit: m.nextVisit
+    });
+  });
+  return out;
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 function openModalClient(id){
   editClientId=id||null;
   if(id){
-    const c=db.clients.find(c=>c.id===id);
-    if(!c) return;
+    const raw=db.clients.find(c=>c.id===id);
+    if(!raw) return;
+    const c=buildClientViewModel(raw);
     document.getElementById('modalClientTitle').textContent='Editar cliente';
     document.getElementById('clNome').value=c.nome||'';
     document.getElementById('clCnpj').value=c.cnpj||'';
@@ -4045,10 +4115,13 @@ function openModalMachine(id=null){
       if(hitC){
         document.getElementById('mcClient').value=hitC.nome;
         // Preenche campos do cliente que estejam vazios na máquina com dados do cadastro
-        const mapC={mcBranch:'branch',mcCnpj:'cnpj',mcContact:'contact',mcPhone:'phone',mcEmail:'email',mcCity:'city',mcDriveLink:'driveLink'};
-        Object.entries(mapC).forEach(([elId,prop])=>{
+        const _hcN=normalizeClientObject(hitC);
+        [['mcBranch',_hcN.branch],['mcCnpj',_hcN.cnpj],['mcContact',_hcN.contact],
+         ['mcPhone',_hcN.telefone],['mcEmail',_hcN.email],['mcCity',_hcN.cidade],
+         ['mcDriveLink',_hcN.drive_url]
+        ].forEach(function([elId,val]){
           const el=document.getElementById(elId);
-          if(el&&!el.value.trim()&&hitC[prop])el.value=hitC[prop];
+          if(el&&!String(el.value||'').trim()&&val)el.value=val;
         });
         // Preencher lastVisit/nextVisit do cliente se a máquina não tiver os seus
         const elLV=document.getElementById('mcLastVisit');
@@ -4072,10 +4145,13 @@ function openModalMachine(id=null){
       const hitC=db.clients.find(c=>clientKey(c.nome)===clientKey(_machFilter));
       if(hitC){
         document.getElementById('mcClient').value=hitC.nome||'';
-        const mapC={mcBranch:'branch',mcCnpj:'cnpj',mcContact:'contact',mcPhone:'phone',mcEmail:'email',mcCity:'city',mcDriveLink:'driveLink'};
-        Object.entries(mapC).forEach(([elId,prop])=>{
+        const _hcN=normalizeClientObject(hitC);
+        [['mcBranch',_hcN.branch],['mcCnpj',_hcN.cnpj],['mcContact',_hcN.contact],
+         ['mcPhone',_hcN.telefone],['mcEmail',_hcN.email],['mcCity',_hcN.cidade],
+         ['mcDriveLink',_hcN.drive_url]
+        ].forEach(function([elId,val]){
           const el=document.getElementById(elId);
-          if(el&&hitC[prop])el.value=hitC[prop];
+          if(el&&!String(el.value||'').trim()&&val)el.value=val;
         });
       } else {
         // Filtro ativo mas cliente não encontrado em db.clients — preencher só o nome
@@ -4133,6 +4209,24 @@ function saveMachine(){
     const eq=db.machines.find(m=>m.id===editMachineId);
     if(!eq.photos) eq.photos=[];
     Object.assign(eq,data);
+    // Propagar dados atualizados para db.clients (campos vazios apenas)
+    (function(){
+      if(!eq.client||isSuspectClientTerm(eq.client))return;
+      const _ck=clientKey(eq.client);if(!_ck)return;
+      const _c=db.clients.find(function(x){return clientKey(x.nome||'')===_ck;});
+      if(!_c)return;
+      let _ch=false;
+      if(!_c.branch   &&eq.branch)  {_c.branch  =eq.branch;  _ch=true;}
+      if(!_c.contact  &&eq.contact) {_c.contact =eq.contact; _ch=true;}
+      if(!_c.lastVisit&&eq.lastVisit){_c.lastVisit=eq.lastVisit;_ch=true;}
+      if(!_c.nextVisit&&eq.nextVisit){_c.nextVisit=eq.nextVisit;_ch=true;}
+      if(!_c.cnpj     &&eq.cnpj)    {_c.cnpj    =eq.cnpj;    _ch=true;}
+      if(!_c.telefone &&eq.phone)   {_c.telefone=eq.phone;   _ch=true;}
+      if(!_c.email    &&eq.email)   {_c.email   =eq.email;   _ch=true;}
+      if(!_c.cidade   &&eq.city)    {_c.cidade  =eq.city;    _ch=true;}
+      if(!_c.drive_url&&eq.driveLink){_c.drive_url=eq.driveLink;_ch=true;}
+      if(_ch){_c.updatedAt=new Date().toISOString();try{syncToGS('saveClient',{client:_c});}catch(e){}}
+    })();
     editMachineId=null;
     toast('Máquina atualizada','success');
   } else {
@@ -4184,6 +4278,8 @@ function saveMachine(){
         if (!existing.email     && emailVal)  { existing.email     = emailVal;  changed = true; }
         if (!existing.cidade    && cityVal)   { existing.cidade    = cityVal;   changed = true; }
         if (!existing.drive_url && driveLVal) { existing.drive_url = driveLVal; changed = true; }
+        if (!existing.branch   && branchVal)  { existing.branch   = branchVal;  changed = true; }
+        if (!existing.contact  && contactVal) { existing.contact  = contactVal; changed = true; }
         if (changed) {
           existing.updatedAt = new Date().toISOString();
           try { syncToGS('saveClient', { client: existing }); } catch(e) {}
