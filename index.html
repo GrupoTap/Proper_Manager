@@ -4121,6 +4121,54 @@ function saveMachine(){
     }
     data.id = data.serial ? machineKey(data.client, data.brand, data.model, data.serial) : (data.tag ? machineKey(data.client,data.brand,data.model,'TAG-'+data.tag) : ('EQ-'+Date.now()+'-'+Math.random().toString(36).slice(2,6)));
     data.photos = []; data.parts = {};
+    // BUG1-FIX: propagar dados de cliente do modal Máquina para db.clients
+    (function upsertClientFromMachine() {
+      if (!client) return;
+      if (!db.clients) db.clients = [];
+      const ckNew = clientKey(client);
+      if (!ckNew) return;
+      const cnpjVal    = (document.getElementById('mcCnpj')?.value    || '').trim();
+      const phoneVal   = (document.getElementById('mcPhone')?.value   || '').trim();
+      const emailVal   = (document.getElementById('mcEmail')?.value   || '').trim();
+      const cityVal    = (document.getElementById('mcCity')?.value    || '').trim();
+      const driveLVal  = (document.getElementById('mcDriveLink')?.value|| '').trim();
+      const contactVal = (document.getElementById('mcContact')?.value || '').trim();
+      const branchVal  = (document.getElementById('mcBranch')?.value  || '').trim();
+      const hasData = cnpjVal || phoneVal || emailVal || cityVal || driveLVal || contactVal;
+      if (!hasData) return;
+      const existing = db.clients.find(c => clientKey(c.nome || '') === ckNew);
+      if (existing) {
+        let changed = false;
+        if (!existing.cnpj      && cnpjVal)   { existing.cnpj      = cnpjVal;   changed = true; }
+        if (!existing.telefone  && phoneVal)  { existing.telefone  = phoneVal;  changed = true; }
+        if (!existing.email     && emailVal)  { existing.email     = emailVal;  changed = true; }
+        if (!existing.cidade    && cityVal)   { existing.cidade    = cityVal;   changed = true; }
+        if (!existing.drive_url && driveLVal) { existing.drive_url = driveLVal; changed = true; }
+        if (changed) {
+          existing.updatedAt = new Date().toISOString();
+          try { syncToGS('saveClient', { client: existing }); } catch(e) {}
+        }
+      } else {
+        const newClient = {
+          id:        'CLI-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6),
+          nome:      client,
+          cnpj:      cnpjVal,
+          cidade:    cityVal,
+          telefone:  phoneVal,
+          email:     emailVal,
+          drive_url: driveLVal,
+          contact:   contactVal,
+          branch:    branchVal,
+          antecedencia_alerta_dias: 30,
+          observacoes: '',
+          tipoRegistro: 'PRODUCAO',
+          createdAt:  new Date().toISOString(),
+          updatedAt:  new Date().toISOString(),
+        };
+        db.clients.push(newClient);
+        try { syncToGS('saveClient', { client: newClient }); } catch(e) {}
+      }
+    })();
     db.machines.push(data);
     toast('Máquina cadastrada', 'success');
   }
@@ -5534,9 +5582,22 @@ function renderClients(){
           const eqs=machinesByClient[clientKey(c.nome||'')]||[];
           const nVenc=eqs.filter(eq=>{const ws=getMachineWorstStatus(eq);return ws?.level==='vencido';}).length;
           const nAlert=eqs.filter(eq=>{const ws=getMachineWorstStatus(eq);return ws?.level==='alerta';}).length;
+          // BUG2-FIX: distinção entre máquina sem dados vs máquina com tudo N/A ou OK
+          function _isMachineConfigured(eq) {
+            return _getEffectiveParts(eq).some(p =>
+              p.na === true ||
+              (p.lastChange !== null && p.lastChange !== undefined && p.lastChange !== '') ||
+              (parseInt(p.interval) || 0) > 0
+            );
+          }
+          const nSemDados = eqs.filter(eq => {
+            const ws = getMachineWorstStatus(eq);
+            return ws?.level === 'faltando' || (!ws && !_isMachineConfigured(eq));
+          }).length;
           let statusDot='';
           if(nVenc>0) statusDot=`<span class="client-status-dot" style="background:var(--red)" title="${nVenc} máquina(s) com preventiva vencida"></span>`;
           else if(nAlert>0) statusDot=`<span class="client-status-dot" style="background:var(--orange)" title="${nAlert} máquina(s) em atenção"></span>`;
+          else if(eqs.length>0 && nSemDados>0) statusDot=`<span class="client-status-dot" style="background:var(--gray-400,#9ca3af)" title="${nSemDados} máquina(s) com dados incompletos"></span>`;
           else if(eqs.length>0) statusDot=`<span class="client-status-dot" style="background:var(--green)" title="Todas as máquinas em dia"></span>`;
           const _normNomeC = normalizeEntityName(c.nome);
           const _isDupC = db.clients.filter(x => x.id !== c.id && normalizeEntityName(x.nome) === _normNomeC).length > 0;
