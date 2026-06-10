@@ -276,7 +276,7 @@ tr:hover td{background:var(--gray-50)}
 .mc-alert-strip{display:flex;align-items:center;gap:5px;margin-top:7px;padding:4px 8px;border-radius:5px;font-size:10px;font-weight:700}
 .mc-alert-strip.vencido{background:#fee2e2;color:#b91c1c}
 .mc-alert-strip.alerta{background:#fef3c7;color:#b45309}
-.mc-alert-strip.faltando{background:var(--gray-100);color:var(--text3)}
+.mc-alert-strip.sem_dados{background:var(--gray-100);color:var(--text3)}
 
 /* ── CLIENTS CRUD ── */
 .client-card{background:white;border:1px solid var(--border);border-radius:var(--radius-lg);padding:14px;transition:box-shadow .15s}
@@ -1997,8 +1997,8 @@ function getMachineWorstStatus(eq){
   });
   if(countVencido>0) return {level:'vencido',count:countVencido,label:`${countVencido} peça${countVencido>1?'s':''} vencida${countVencido>1?'s':''}`};
   if(countAlerta>0)  return {level:'alerta', count:countAlerta, label:`${countAlerta} peça${countAlerta>1?'s':''} em atenção`};
-  if(countSemDados>0)return {level:'faltando',count:countSemDados,label:`${countSemDados} peça${countSemDados>1?'s':''} sem dados`};
-  return null;
+  if(countSemDados>0)return {level:'sem_dados',count:countSemDados,label:`${countSemDados} peça${countSemDados>1?'s':''} sem dados`};
+  return {level:'ok',count:0,label:'OK'};
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -2633,10 +2633,10 @@ function renderDashboard(){
   let nVencidas=0, nAlertas=0, nOk=0, nSemDados=0;
   db.machines.forEach(eq=>{
     const ws=getMachineWorstStatus(eq);
-    if(!ws) nSemDados++;
-    else if(ws.level==='vencido') nVencidas++;
+    if(ws.level==='vencido') nVencidas++;
     else if(ws.level==='alerta')  nAlertas++;
-    else nOk++;
+    else if(ws.level==='sem_dados') nSemDados++;
+    else if(ws.level==='ok') nOk++;
   });
 
   const withModel=db.machines.filter(eq=>db.models.some(m=>modelKey(m.brand,m.model)===modelKey(eq.brand,eq.model))).length;
@@ -2761,10 +2761,10 @@ function renderPreventivas(){
   }));
 
   // Ordenar: vencido > alerta > sem_dados > ok
-  const order={vencido:0,alerta:1,faltando:2,ok:3,null:4};
+  const order={vencido:0,alerta:1,sem_dados:2,ok:3};
   rows.sort((a,b)=>{
-    const oa=order[a.ws?.level||'null'];
-    const ob=order[b.ws?.level||'null'];
+    const oa=order[a.ws?.level ?? 'sem_dados'];
+    const ob=order[b.ws?.level ?? 'sem_dados'];
     if(oa!==ob) return oa-ob;
     return (b.ws?.count||0)-(a.ws?.count||0);
   });
@@ -2775,7 +2775,7 @@ function renderPreventivas(){
         if (!eq.hpw || eq.hpw <= 0) return false;
         const parts = _getEffectiveParts(eq);
         return parts.some(p => {
-          if (p.na || !p.lastChange || !p.interval) return false;
+          if (p.na || !hasVal(p.lastChange) || !hasVal(p.interval)) return false;
           const { status, remaining } = calcPartStatus(p.lastChange, p.interval, eq.hourTotal || 0);
           if (status === 'vencido') return false;
           if (remaining === null) return false;
@@ -2783,23 +2783,22 @@ function renderPreventivas(){
         });
       })
     : rows.filter(({ ws }) => {
-        if (!ws) return _prevFilter === 'sem_dados';
-        return ws.level === _prevFilter;
+        return ws?.level === _prevFilter;
       });
 
   const counts={
     todos: rows.length,
     vencido: rows.filter(r=>r.ws?.level==='vencido').length,
     alerta:  rows.filter(r=>r.ws?.level==='alerta').length,
-    ok:      rows.filter(r=>!r.ws||r.ws.level==='ok').length,
-    sem_dados: rows.filter(r=>!r.ws).length,
+    ok:      rows.filter(r=>r.ws?.level==='ok').length,
+    sem_dados: rows.filter(r=>r.ws?.level==='sem_dados').length,
   };
 
   const nProximos30 = db.machines.filter(eq => {
     if (!eq.hpw || eq.hpw <= 0) return false;
     const parts = _getEffectiveParts(eq);
     return parts.some(p => {
-      if (p.na || !p.lastChange || !p.interval) return false;
+      if (p.na || !hasVal(p.lastChange) || !hasVal(p.interval)) return false;
       const { status, remaining } = calcPartStatus(p.lastChange, p.interval, eq.hourTotal || 0);
       if (status === 'vencido') return false;
       if (remaining === null) return false;
@@ -2829,9 +2828,10 @@ function renderPreventivas(){
         <div class="stat-val" style="color:var(--green)">${counts.ok}</div>
         <div class="stat-lbl">Em dia →</div>
       </div>
-      <div class="stat-card no-action">
+      <div class="stat-card ${counts.sem_dados ? '' : 'no-action'}"
+           ${counts.sem_dados ? `style="cursor:pointer" onclick="setPrevFilter('sem_dados')" title="Ver máquinas sem dados de peças"` : ''}>
         <div class="stat-val" style="color:var(--text3)">${counts.sem_dados}</div>
-        <div class="stat-lbl">Sem dados</div>
+        <div class="stat-lbl">${counts.sem_dados ? 'Sem dados →' : 'Sem dados'}</div>
         <div class="card-tooltip">Máquinas sem intervalo de preventiva cadastrado</div>
       </div>
     </div>
@@ -2891,9 +2891,9 @@ function renderPreventivas(){
                 </div>`:'<span style="color:var(--text3)">—</span>'}
             </td>
             <td>
-              ${!ws?'<span class="badge-sem">Sem dados</span>':
-                ws.level==='vencido'?`<span class="badge-vencido">⛔ ${ws.count} vencida${ws.count>1?'s':''}`:
+              ${ws.level==='vencido'?`<span class="badge-vencido">⛔ ${ws.count} vencida${ws.count>1?'s':''}`:
                 ws.level==='alerta' ?`<span class="badge-alerta">⚠ ${ws.count} em alerta</span>`:
+                ws.level==='sem_dados'?`<span class="badge-sem">📋 ${ws.label}</span>`:
                 '<span class="badge-ok">✓ OK</span>'}
             </td>
             <td><button class="btn btn-secondary btn-xs" onclick="event.stopPropagation();openMachineDetail('${eq.id}')">Detalhes</button></td>
@@ -3090,7 +3090,7 @@ function renderPartSearchResults() {
       <div style="border:1px solid var(--border);border-radius:var(--radius);margin-bottom:8px;overflow:hidden">
         <div style="padding:8px 12px;background:var(--blue-pale);display:flex;align-items:center;justify-content:space-between;gap:8px">
           <div>
-            <div style="font-weight:700;font-size:12px">${escHtml(g.partName)} ${renderSourceBadge('catalog')} <span style="font-weight:400;color:var(--text3)">· ref: ${escHtml(g.oemRef || '—')}</span></div>
+            <div style="font-weight:700;font-size:12px">${escHtml(g.partName)} ${renderSourceBadge('catalog')} <span style="font-weight:400;color:var(--text3)">· ref: ${escHtml(g.oemRef ? g.oemRef : '—')}</span></div>
             <div style="font-size:10px;color:var(--text2)">${escHtml(g.brand)} ${escHtml(g.model)}${g.subsystem ? ' · ' + escHtml(g.subsystem) : ''}${g.slot ? ' · slot: ' + escHtml(g.slot) : ''}</div>
           </div>
           <button class="btn btn-secondary btn-xs" onclick="selectModel('${g.modelId}');showView('catalog')">Ver modelo</button>
@@ -3107,7 +3107,7 @@ function renderPartSearchResults() {
   if (orphanMachines.length) {
     html += `<div style="border:1px solid #fcd9a0;border-radius:var(--radius);padding:8px 12px;margin-bottom:8px;background:#fff9f0">
       <div style="font-size:11px;font-weight:700;color:#d97706;margin-bottom:4px">⚠ Peças em campo não catalogadas ${renderSourceBadge('machine_parts')}</div>
-      ${orphanMachines.map(m => `<div style="font-size:11px;color:var(--text2)">${escHtml(m.client)} · ${escHtml(m.brand)} ${escHtml(m.model)} · ref: ${escHtml(m.oemRef || '—')}
+      ${orphanMachines.map(m => `<div style="font-size:11px;color:var(--text2)">${escHtml(m.client)} · ${escHtml(m.brand)} ${escHtml(m.model)} · ref: ${escHtml(m.oemRef ? m.oemRef : '—')}
         <button class="btn btn-secondary btn-xs" style="margin-left:4px" onclick="openMachineDetail('${m.machineId}')">Abrir</button></div>`).join('')}
     </div>`;
   }
@@ -3356,7 +3356,7 @@ function renderCatalog(){
               <td><span style="font-family:'IBM Plex Mono',monospace;font-size:10px;background:var(--blue-light);color:var(--blue-mid);padding:2px 7px;border-radius:4px">${eq.tag||'—'}</span></td>
               <td><div style="font-weight:600;font-size:12px">${eq.client||'—'}</div><div style="font-size:10px;color:var(--text3)">${eq.branch||eq.location||''}</div></td>
               <td><span class="mach-hora">${(eq.hourTotal||0).toLocaleString('pt-BR')}h</span></td>
-              <td>${!ws?'<span class="badge-sem">Sem dados</span>':ws.level==='vencido'?`<span class="badge-vencido">⛔ ${ws.label}</span>`:ws.level==='alerta'?`<span class="badge-alerta">⚠ ${ws.label}</span>`:ws.level==='faltando'?`<span class="badge-sem">📋 ${ws.label}</span>`:'<span class="badge-ok">✓ OK</span>'}</td>
+              <td>${!ws?'<span class="badge-sem">Sem dados</span>':ws.level==='vencido'?`<span class="badge-vencido">⛔ ${ws.label}</span>`:ws.level==='alerta'?`<span class="badge-alerta">⚠ ${ws.label}</span>`:ws.level==='sem_dados'?`<span class="badge-sem">📋 ${ws.label}</span>`:'<span class="badge-ok">✓ OK</span>'}</td>
             </tr>`;
           }).join('')}</tbody>
         </table>
@@ -3921,7 +3921,7 @@ function checkPartRefDuplicate(ref) {
     alertEl.classList.add('show');
     document.getElementById('dupPartList').innerHTML = dups.map(p => `
       <div class="dup-item">
-        <span class="dup-item-info">${p.name} <span style="color:var(--text3)">(ref: ${p.ref || '—'})</span></span>
+        <span class="dup-item-info">${p.name} <span style="color:var(--text3)">(ref: ${p.ref ? p.ref : '—'})</span></span>
         <button class="btn btn-secondary btn-xs" onclick="document.getElementById('dupPartAlert').classList.remove('show')">Ignorar</button>
       </div>`).join('');
   } else { alertEl.classList.remove('show'); }
@@ -4451,7 +4451,7 @@ function renderFormNovaPreventiva(eq){
     const st = getPartStatus(part, eq.hourTotal||0);
     return `<tr>
       <td>${part.name||pid}</td>
-      <td>${part.ref||'—'}</td>
+      <td>${part.ref ? part.ref : '—'}</td>
       <td>${last?last.toLocaleString('pt-BR')+'h':'—'}</td>
       <td>${interval?interval.toLocaleString('pt-BR')+'h':'—'}</td>
       <td>${next?next.toLocaleString('pt-BR')+'h':'—'}</td>
@@ -4731,7 +4731,7 @@ function renderHistoricoPreventivas(visits, pecasLog) {
       ? `<div style="margin-top:8px">
           <div style="font-size:11px;font-weight:700;color:#0f766e;margin-bottom:4px">Peças trocadas</div>
           ${trocadas.map(p=>{
-            const refNova = p.refNova || p.ref || '—';
+            const refNova = p.refNova ? p.refNova : (p.ref ? p.ref : '—');
             const refAnt = p.refAnterior || '';
             const era = refAnt && refAnt!==refNova ? ` <span style="color:var(--text3)">· era: ${refAnt}</span>` : '';
             const hTroca = parseInt(p.hourTotal || v.hourTotal)||0;
@@ -4788,7 +4788,8 @@ function _getMachineWorst(eq){
   let cv=0, ca=0;
   parts.forEach(p=>{
     if(p.na) return;
-    const {status}=calcPartStatus(p.lastChange||0, p.interval, eq.hourTotal||0);
+    if (p.lastChange === undefined || p.lastChange === null || p.lastChange === '') return;
+    const {status}=calcPartStatus(p.lastChange, p.interval, eq.hourTotal||0);
     if(status==='vencido') cv++;
     else if(status==='alerta') ca++;
   });
@@ -4866,7 +4867,7 @@ function _buildPartsReadTable(eq, hourTotal, hpw){
       const trClass = p.na ? ' class="parts-na-row"' : '';
       return `<tr${trClass}${trStyle}>
         <td><div class="td-name">${p.name}${p.na?' <span style="font-size:10px;color:#9ca3af;font-style:italic">(N/A)</span>':''}</div></td>
-        <td>${p.ref||'—'}</td>
+        <td>${p.ref ? p.ref : '—'}</td>
         <td>${hasVal(p.valorMostrado) ? `${p.valorMostrado}h` : '—'}</td>
         <td>${p.contador||'—'}</td>
         <td>${(p.lastChange!==null&&p.lastChange!==undefined&&p.lastChange!=='')?`${Number(p.lastChange).toLocaleString('pt-BR')}h`:'—'}</td>
@@ -5133,7 +5134,9 @@ function calcularEstoque(){
 
       if(horasRestantes <= horasHorizonte){
         const diasRestantes = Math.round(horasRestantes / horasPorDia);
-        const ref = part.ref || '—';
+        const ref = (part.ref || '').trim();
+        if (!ref) return;
+        if (ref === '—' || ref === '-') return;
         const clientMatch = (db.clients || []).find(c => clientKey(c.nome) === clientKey(eq.client || ''));
         resultados.push({
           partId:         part.id,
@@ -5184,6 +5187,27 @@ function _urgenciaBadgeHtml(dias){
   return `<span style="background:var(--blue-light);color:var(--blue-mid);font-weight:700;padding:2px 8px;border-radius:12px;font-size:11px">${dias}d</span>`;
 }
 
+
+function getCatalogSimilaritiesByRef(ref){
+  const target = normalizeRef(ref);
+  if(!target) return [];
+  for(const model of (db.models || [])){
+    const parts = [
+      ...(model.directParts || []),
+      ...((model.subsystems || []).flatMap(ss => ss.parts || []))
+    ];
+    const found = parts.find(part => normalizeRef(part.ref || '') === target);
+    if(found){
+      return (found.similarities || [])
+        .map(sim => typeof sim === 'string' ? sim : (sim.ref || ''))
+        .map(sim => String(sim || '').trim())
+        .filter(sim => sim && sim !== '—' && sim !== '-' && normalizeRef(sim) !== target)
+        .filter((sim, idx, arr) => arr.findIndex(x => normalizeRef(x) === normalizeRef(sim)) === idx);
+    }
+  }
+  return [];
+}
+
 function renderEstoqueResultado(result){
   const el = document.getElementById('estoqueResultado');
   if(!el) return;
@@ -5198,6 +5222,12 @@ function renderEstoqueResultado(result){
 
   const rows = result.grupos.map((g, i) => {
     const bg = i % 2 === 0 ? '#ffffff' : 'var(--gray-50)';
+    const sims = getCatalogSimilaritiesByRef(g.ref);
+    const simLinha = sims.length ? `<tr style="background:${bg}">
+        <td colspan="5" style="padding:2px 16px 4px 32px;font-size:11px;color:var(--text2)">
+          Equivalentes/Similares: <span style="font-family:'IBM Plex Mono',monospace">${sims.map(escHtml).join(' · ')}</span>
+        </td>
+      </tr>` : '';
     const subLinhas = g.maquinas.map(m => {
       const nv = m.nextVisit ? ` · Próx.visita: ${escHtml(m.nextVisit)}` : '';
       const diasLabel = m.diasRestantes <= 0 ? 'Vencida' : `${m.diasRestantes}d`;
@@ -5214,7 +5244,7 @@ function renderEstoqueResultado(result){
       <td style="padding:8px 12px;text-align:center;font-size:12px">${g.maquinas.length}</td>
       <td style="padding:8px 12px;text-align:center">${_urgenciaBadgeHtml(g.menorDias)}</td>
       <td style="padding:8px 12px;font-size:11px;color:var(--text2)">${g.maquinas.map(m=>`${escHtml(m.client)} · ${escHtml(m.model)}`).join(', ')}</td>
-    </tr>${subLinhas}`;
+    </tr>${simLinha}${subLinhas}`;
   }).join('');
 
   let html = `<div class="table-wrap"><table style="width:100%;border-collapse:collapse">
@@ -5370,6 +5400,18 @@ function gerarPDFEstoque(){
     doc.text(maqSummary, colX[4]+1, y+4.5, {maxWidth: colW[4]-2});
     y += 7;
 
+    const sims = getCatalogSimilaritiesByRef(g.ref);
+    if(sims.length){
+      checarY(5);
+      doc.setFillColor(...(isAlt ? EST_LGRAY : EST_WHITE));
+      doc.rect(marginL, y, contentW, 5, 'F');
+      doc.setFont('helvetica','normal');
+      doc.setFontSize(7);
+      doc.setTextColor(...EST_TEXT2);
+      doc.text(ltxEst(`  Equivalentes/Similares: ${sims.join(' · ')}`), colX[0]+4, y+3.5, {maxWidth: contentW-6});
+      y += 5;
+    }
+
     // Sub-linhas de máquinas
     g.maquinas.forEach(m => {
       checarY(5);
@@ -5518,7 +5560,7 @@ function renderMachines(){
               ${!ws?'<span class="badge-sem">Sem dados</span>':
                 ws.level==='vencido'?`<span class="badge-vencido">⛔ ${ws.label}</span>`:
                 ws.level==='alerta'?`<span class="badge-alerta">⚠ ${ws.label}</span>`:
-                ws.level==='faltando'?`<span class="badge-sem">📋 ${ws.label}</span>`:
+                ws.level==='sem_dados'?`<span class="badge-sem">📋 ${ws.label}</span>`:
                 '<span class="badge-ok">✓ OK</span>'}
             </td>
             <td>
@@ -5728,7 +5770,7 @@ function renderClients(){
           }
           const nSemDados = eqs.filter(eq => {
             const ws = getMachineWorstStatus(eq);
-            return ws?.level === 'faltando' || (!ws && !_isMachineConfigured(eq));
+            return ws?.level === 'sem_dados';
           }).length;
           let statusDot='';
           if(nVenc>0) statusDot=`<span class="client-status-dot" style="background:var(--red)" title="${nVenc} máquina(s) com preventiva vencida"></span>`;
@@ -6397,8 +6439,8 @@ async function syncFromGS({ silent = false } = {}){
             const ex = eq.parts[pid] || {};
             eq.parts[pid] = {
               name: ps.name || ex.name || pid,
-              lastChange: ps.lastChange!==undefined ? parseInt(ps.lastChange)||0 : (ex.lastChange||0),
-              interval: ps.interval ? parseInt(ps.interval)||2000 : (ex.interval||2000),
+              lastChange: hasVal(ps.lastChange) ? (parseInt(ps.lastChange)||0) : (hasVal(ex.lastChange) ? ex.lastChange : ''),
+              interval: hasVal(ps.interval) ? (parseInt(ps.interval)||0) : (hasVal(ex.interval) ? ex.interval : ''),
               ref: ps.ref || ex.ref || '',
               na: ps.na!==undefined ? !!ps.na : !!ex.na,
               // v1.5: preservar campos calculados
