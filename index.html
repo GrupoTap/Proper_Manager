@@ -1020,12 +1020,32 @@ tr:hover td{background:var(--gray-50)}
     </div>
     <div class="form-row">
       <div class="form-group">
-        <label class="form-label">Telefone</label>
+        <label class="form-label">Filial / Unidade <span>opcional</span></label>
+        <input class="form-input" id="clFilial" placeholder="ex: Matriz, Filial Andaimes">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Contato responsável <span>opcional</span></label>
+        <input class="form-input" id="clContato" placeholder="ex: João da Silva">
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label">Telefone <span>opcional</span></label>
         <input class="form-input" id="clTelefone" placeholder="ex: (37) 99999-0000">
       </div>
       <div class="form-group">
-        <label class="form-label">E-mail</label>
+        <label class="form-label">E-mail <span>opcional</span></label>
         <input class="form-input" id="clEmail" placeholder="ex: contato@empresa.com.br">
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label">Última visita <span>opcional</span></label>
+        <input class="form-input" type="date" id="clLastVisit">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Próxima visita <span>opcional</span></label>
+        <input class="form-input" type="date" id="clNextVisit">
       </div>
     </div>
     <div class="form-row">
@@ -2004,10 +2024,14 @@ function openModalClient(id){
     document.getElementById('clObs').value=c.observacoes||'';
     document.getElementById('clEndereco').value=c.endereco||'';
     document.getElementById('clUF').value=c.uf||'';
+    document.getElementById('clFilial').value=c.branch||c.filial||'';
+    document.getElementById('clContato').value=c.contact||c.contato||'';
+    document.getElementById('clLastVisit').value=c.lastVisit||c.ult_visita||'';
+    document.getElementById('clNextVisit').value=c.nextVisit||c.prox_visita||'';
   } else {
     document.getElementById('modalClientTitle').textContent='Novo cliente';
     document.getElementById('dupClientAlert')?.classList.remove('show');
-    ['clNome','clCnpj','clCidade','clEndereco','clUF','clTelefone','clEmail','clDrive','clObs'].forEach(f=>document.getElementById(f).value='');
+    ['clNome','clCnpj','clCidade','clEndereco','clUF','clFilial','clContato','clLastVisit','clNextVisit','clTelefone','clEmail','clDrive','clObs'].forEach(f=>{const el=document.getElementById(f);if(el)el.value='';});
     document.getElementById('clAlerta').value=30;
   }
   openModal('modalClient');
@@ -2030,6 +2054,10 @@ function saveClient(){
     observacoes:document.getElementById('clObs').value.trim(),
     endereco:   document.getElementById('clEndereco').value.trim(),
     uf:         document.getElementById('clUF').value.trim().toUpperCase(),
+    branch:     document.getElementById('clFilial').value.trim(),
+    contact:    document.getElementById('clContato').value.trim(),
+    lastVisit:  document.getElementById('clLastVisit').value,
+    nextVisit:  document.getElementById('clNextVisit').value,
     tipoRegistro: 'PRODUCAO',
     updatedAt:  new Date().toISOString()
   };
@@ -2180,6 +2208,12 @@ function selectDuplicateClientForMerge(targetId) {
   document.getElementById('clAlerta').value = target.antecedencia_alerta_dias || 30;
   document.getElementById('clDrive').value = target.drive_url || '';
   document.getElementById('clObs').value = target.observacoes || '';
+  document.getElementById('clFilial').value = target.branch || target.filial || '';
+  document.getElementById('clContato').value = target.contact || target.contato || '';
+  document.getElementById('clLastVisit').value = target.lastVisit || target.ult_visita || '';
+  document.getElementById('clNextVisit').value = target.nextVisit || target.prox_visita || '';
+  if(target.endereco) document.getElementById('clEndereco').value = target.endereco;
+  if(target.uf) document.getElementById('clUF').value = target.uf;
   if (source) {
     if (!target.cnpj && source.cnpj) document.getElementById('clCnpj').value = source.cnpj;
     if (!target.cidade && source.cidade) document.getElementById('clCidade').value = source.cidade;
@@ -4010,11 +4044,17 @@ function openModalMachine(id=null){
       const hitC=db.clients.find(c=>clientKey(c.nome)===clientKey(eq.client||''));
       if(hitC){
         document.getElementById('mcClient').value=hitC.nome;
+        // Preenche campos do cliente que estejam vazios na máquina com dados do cadastro
         const mapC={mcBranch:'branch',mcCnpj:'cnpj',mcContact:'contact',mcPhone:'phone',mcEmail:'email',mcCity:'city',mcDriveLink:'driveLink'};
         Object.entries(mapC).forEach(([elId,prop])=>{
           const el=document.getElementById(elId);
           if(el&&!el.value.trim()&&hitC[prop])el.value=hitC[prop];
         });
+        // Preencher lastVisit/nextVisit do cliente se a máquina não tiver os seus
+        const elLV=document.getElementById('mcLastVisit');
+        const elNV=document.getElementById('mcNextVisit');
+        if(elLV&&!elLV.value&&(hitC.lastVisit||hitC.ult_visita))elLV.value=hitC.lastVisit||hitC.ult_visita||'';
+        if(elNV&&!elNV.value&&(hitC.nextVisit||hitC.prox_visita))elNV.value=hitC.nextVisit||hitC.prox_visita||'';
       }
     }
     document.getElementById('mcYear').value=eq.year||'';
@@ -6078,6 +6118,12 @@ async function syncFromGS({ silent = false } = {}){
         if (!existing.drive_url && sc.Drive_URL) existing.drive_url = sc.Drive_URL;
         if (!existing.antecedencia_alerta_dias && sc.Antecedencia_Alerta_Dias)
           existing.antecedencia_alerta_dias = parseInt(sc.Antecedencia_Alerta_Dias) || 0;
+        if (!existing.contact  && sc.Contato)   existing.contact  = sc.Contato;
+        if (!existing.branch   && sc.Filial)    existing.branch   = sc.Filial;
+        if (!existing.nextVisit && sc.Prox_Visita) existing.nextVisit = sc.Prox_Visita;
+        if (!existing.lastVisit && sc.Ult_Visita)  existing.lastVisit = sc.Ult_Visita;
+        if (!existing.endereco && sc.Endereco)  existing.endereco = sc.Endereco;
+        if (!existing.uf       && sc.UF)        existing.uf       = sc.UF;
       } else {
         db.clients.push({
           id:    scId || ('CLI-' + Date.now()),
@@ -6089,6 +6135,12 @@ async function syncFromGS({ silent = false } = {}){
           drive_url: sc.Drive_URL || '',
           antecedencia_alerta_dias: parseInt(sc.Antecedencia_Alerta_Dias) || 0,
           obs:   sc.Observações || '',
+          contact:   sc.Contato     || '',
+          branch:    sc.Filial      || '',
+          nextVisit: sc.Prox_Visita || '',
+          lastVisit: sc.Ult_Visita  || '',
+          endereco:  sc.Endereco    || '',
+          uf:        sc.UF          || '',
         });
       }
     });
