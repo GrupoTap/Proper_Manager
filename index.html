@@ -2560,12 +2560,13 @@ function showView(v){
   } else if(v==='config'){
     renderConfigStats();
     if(gsUrl) document.getElementById('gsUrlInput').value=gsUrl;
+    loadTecnicosConfig();
   }
 }
 
 
 // ═══════════════════════════════════════════════════════════
-// ORDENS DE SERVIÇO — Fase 1 (PCM v29)
+// ORDENS DE SERVIÇO — Fase 1 (PCM v30)
 // ═══════════════════════════════════════════════════════════
 let _osCache=[];
 let _osFilters={status:'', tecnico:'', cliente:'', de:'', ate:''};
@@ -2600,32 +2601,52 @@ async function loadOSList(){
 function renderOSTable(){
   const body=document.getElementById('osListBody'); if(!body) return;
   if(!_osCache.length){body.innerHTML='<div class="empty"><div class="empty-title">Nenhuma OS encontrada</div></div>';return;}
-  body.innerHTML=`<div class="table-wrap"><table class="mach-table"><thead><tr><th>Número</th><th>Cliente</th><th>Status</th><th>Prevista</th><th>Técnicos</th><th>Máquinas</th><th></th></tr></thead><tbody>${_osCache.map(o=>`<tr><td><b>${osEscape(o.numero_os)}</b></td><td>${osEscape(o.cliente)}</td><td>${osBadge(o.status)}</td><td>${osEscape(o.data_prevista||'—')}</td><td>${osParseArray(o.tecnicos_vinculados).map(osEscape).join(', ')||'—'}</td><td>${osParseArray(o.maquinas_vinculadas).length}</td><td><button class="btn btn-secondary btn-sm" onclick="openOSDetail('${osEscape(o.numero_os)}')">Abrir</button></td></tr>`).join('')}</tbody></table></div>`;
+  body.innerHTML=`<div class="table-wrap"><table class="mach-table"><thead><tr><th>Número</th><th>Cliente</th><th>Status</th><th>Tipo</th><th>Prevista</th><th>Técnicos</th><th>Máquinas</th><th></th></tr></thead><tbody>${_osCache.map(o=>`<tr><td><b>${osEscape(o.numero_os)}</b></td><td>${osEscape(o.cliente)}</td><td>${osBadge(o.status)}</td><td>${osEscape(o.tipo_os||'Preventiva')}</td><td>${osEscape(o.data_prevista||'—')}</td><td>${osParseArray(o.tecnicos_vinculados).map(osEscape).join(', ')||'—'}</td><td>${osParseArray(o.maquinas_vinculadas).length}</td><td><button class="btn btn-secondary btn-sm" onclick="openOSDetail('${osEscape(o.numero_os)}')">Abrir</button></td></tr>`).join('')}</tbody></table></div>`;
 }
-function openOSForm(){
+async function openOSForm(){
   const clients=(db.clients||[]).map(c=>c.nome||c.name||c.Nome).filter(Boolean);
-  const machines=(db.machines||[]).map(m=>`<label style="display:block;font-size:12px;margin:3px 0"><input type="checkbox" class="osMachineChk" value="${osEscape(m.id)}"> ${osEscape(m.client||'')} · ${osEscape(m.tag||m.serial||m.model||m.id)}</label>`).join('');
-  const html=`<div class="overlay show" id="modalOS"><div class="modal modal-lg"><div class="modal-title">🧾 Nova Ordem de Serviço</div>
-    <div class="form-row"><div class="form-group"><label class="form-label">Cliente</label><input class="form-input" id="osCliente" list="osClients"></div><div class="form-group"><label class="form-label">Data prevista</label><input class="form-input" type="date" id="osPrevista"></div></div>
+  let tecnicos=[];
+  let tecError='';
+  try{
+    const d=await gsGet('getTecnicos');
+    tecnicos=(d.tecnicos||[]).filter(t=>t.ativo!==false && t.ativo!=='false');
+  }catch(e){ tecError=e.message||'Falha ao carregar técnicos'; }
+  const tecOptions=tecnicos.map(t=>`<option value="${osEscape(t.id)}">${osEscape(t.nome||t.id)}</option>`).join('');
+  const tecWarn=!tecnicos.length ? `<div class="info-box" style="margin-top:8px;color:var(--danger)">${osEscape(tecError||'Nenhum técnico cadastrado. Cadastre em Configurações > Técnicos.')}</div>` : '';
+  const machines=(db.machines||[]).map(m=>`<label style="display:block;font-size:12px;margin:3px 0"><input type="checkbox" class="osMachineChk" value="${osEscape(m.id)}" data-client="${osEscape(m.client||'')}"> ${osEscape(m.client||'')} · ${osEscape(m.tag||m.serial||m.model||m.id)}</label>`).join('');
+  const html=`<div class="overlay open" id="modalOS"><div class="modal modal-lg"><div class="modal-title">🧾 Nova Ordem de Serviço</div>
+    <div class="form-row"><div class="form-group"><label class="form-label">Cliente</label><input class="form-input" id="osCliente" list="osClients" onchange="osFilterMachines()"></div><div class="form-group"><label class="form-label">Data prevista</label><input class="form-input" type="date" id="osPrevista"></div></div>
     <datalist id="osClients">${clients.map(c=>`<option value="${osEscape(c)}">`).join('')}</datalist>
-    <div class="form-group"><label class="form-label">Técnicos vinculados <span>IDs separados por vírgula; CAT_TECNICOS é a fonte no Sheets</span></label><input class="form-input" id="osTecnicos" placeholder="TEC-001, TEC-002"></div>
+    <div class="form-row"><div class="form-group"><label class="form-label">Tipo de OS</label><select class="form-select" id="osTipo"><option selected>Preventiva</option><option>Corretiva</option><option>Visita Técnica</option><option>Diagnóstico</option><option>Genérica</option></select></div>
+    <div class="form-group"><label class="form-label">Técnicos</label><select class="form-select" id="osTecnicosSelect" multiple size="3">${tecOptions}</select>${tecWarn}</div></div>
     <div class="form-group"><label class="form-label">Descrição</label><textarea class="form-textarea" id="osDesc"></textarea></div>
     <div class="form-group"><label class="form-label">Máquinas sugeridas</label><div style="max-height:180px;overflow:auto;border:1px solid var(--border);border-radius:var(--radius);padding:8px">${machines||'Cadastre/sincronize máquinas primeiro.'}</div></div>
-    <div class="modal-footer"><button class="btn btn-secondary" onclick="document.getElementById('modalOS').remove()">Cancelar</button><button class="btn btn-primary" onclick="saveOSFromPCM()">Salvar OS</button></div>
+    <div class="modal-footer"><button class="btn btn-secondary" onclick="document.getElementById('modalOS').remove()">Cancelar</button><button class="btn btn-primary" ${!tecnicos.length?'disabled':''} onclick="saveOSFromPCM()">Salvar OS</button></div>
   </div></div>`;
   document.body.insertAdjacentHTML('beforeend', html);
+  osFilterMachines();
+}
+function osFilterMachines(){
+  const clienteNorm = (document.getElementById('osCliente')?.value||'').trim().toLowerCase();
+  document.querySelectorAll('.osMachineChk').forEach(function(chk){
+    const clienteLabel = chk.dataset.client || '';
+    const match = !clienteNorm || clienteLabel.toLowerCase().includes(clienteNorm);
+    chk.closest('label').style.display = match ? 'block' : 'none';
+  });
 }
 async function saveOSFromPCM(){
-  const payload={cliente:osCliente.value.trim(),data_prevista:osPrevista.value,descricao:osDesc.value.trim(),tecnicos_vinculados:osTecnicos.value.split(',').map(s=>s.trim()).filter(Boolean),maquinas_vinculadas:[...document.querySelectorAll('.osMachineChk:checked')].map(x=>x.value)};
+  const payload={cliente:osCliente.value.trim(),data_prevista:osPrevista.value,descricao:osDesc.value.trim(),tipo_os:document.getElementById('osTipo')?.value||'Preventiva',tecnicos_vinculados:[...document.querySelectorAll('#osTecnicosSelect option:checked')].map(o=>o.value),maquinas_vinculadas:[...document.querySelectorAll('.osMachineChk:checked')].map(x=>x.value)};
+  payload.id_cliente=(db.clients||[]).find(c=>(c.nome||c.name||c.Nome||'').toLowerCase().trim()===payload.cliente.toLowerCase().trim())?.id || '';
   if(!payload.cliente) return toast('Informe o cliente','warning');
+  if(!payload.tecnicos_vinculados.length) return toast('Selecione ao menos um técnico','warning');
   try{ await syncToGS('saveOS', payload); document.getElementById('modalOS')?.remove(); toast('OS salva'); loadOSList(); }catch(e){ toast('Erro OS: '+e.message,'error'); }
 }
 async function openOSDetail(numero){
   const o=_osCache.find(x=>String(x.numero_os)===String(numero)); if(!o) return;
   let attachments=[]; try{attachments=(await gsGet('getAttachments',{osNumero:numero})).attachments||[];}catch(e){console.warn(e);}
   const gal=attachments.map(a=>`<a href="${osEscape(a.File_URL)}" target="_blank" style="display:inline-block;border:1px solid var(--border);border-radius:8px;padding:8px;margin:4px;font-size:11px;text-decoration:none;color:var(--text1)">📎 ${osEscape(a.Attachment_Type||'arquivo')}<br><span style="color:var(--text3)">${osEscape(a.File_Name||'')}</span></a>`).join('')||'<div style="font-size:12px;color:var(--text3)">Sem anexos no TECH_ATTACHMENTS.</div>';
-  const html=`<div class="overlay show" id="modalOSDetail"><div class="modal modal-lg"><div class="modal-title">🧾 OS ${osEscape(o.numero_os)}</div>
-  <div style="font-size:13px;line-height:1.6"><b>Cliente:</b> ${osEscape(o.cliente)}<br><b>Status:</b> ${osBadge(o.status)}<br><b>Descrição:</b> ${osEscape(o.descricao||'—')}<br><b>Técnicos:</b> ${osParseArray(o.tecnicos_vinculados).map(osEscape).join(', ')||'—'}<br><b>Máquinas:</b> ${osParseArray(o.maquinas_vinculadas).map(osEscape).join(', ')||'—'}<br>${o.id_visita_resultado?`<b>Visita:</b> ${osEscape(o.id_visita_resultado)}<br>`:''}</div>
+  const html=`<div class="overlay open" id="modalOSDetail"><div class="modal modal-lg"><div class="modal-title">🧾 OS ${osEscape(o.numero_os)}</div>
+  <div style="font-size:13px;line-height:1.6"><b>Cliente:</b> ${osEscape(o.cliente)}<br><b>Status:</b> ${osBadge(o.status)}<br><b>Tipo:</b> ${osEscape(o.tipo_os||'Preventiva')}<br><b>Descrição:</b> ${osEscape(o.descricao||'—')}<br><b>Técnicos:</b> ${osParseArray(o.tecnicos_vinculados).map(osEscape).join(', ')||'—'}<br><b>Máquinas:</b> ${osParseArray(o.maquinas_vinculadas).map(osEscape).join(', ')||'—'}<br>${o.id_visita_resultado?`<b>Visita:</b> ${osEscape(o.id_visita_resultado)}<br>`:''}</div>
   <div style="margin:12px 0;display:flex;gap:8px;flex-wrap:wrap">${o.drive_folder_url?`<a class="btn btn-secondary" target="_blank" href="${osEscape(o.drive_folder_url)}">Ver pasta no Drive</a>`:''}${o.pdf_url?`<a class="btn btn-primary" target="_blank" href="${osEscape(o.pdf_url)}">Ver relatório PDF</a>`:''}</div>
   <div class="sec-title" style="margin:10px 0">Galeria de anexos</div><div>${gal}</div>
   <div class="modal-footer"><button class="btn btn-secondary" onclick="document.getElementById('modalOSDetail').remove()">Fechar</button></div></div></div>`;
@@ -5950,6 +5971,36 @@ function _renderSnapshotsList() {
   '<div style="margin-top:10px"><button class="btn btn-secondary btn-sm" onclick="snapshotPreMigration(\'manual_\'+new Date().toISOString().slice(0,10));if(currentView===\'config\')renderConfigStats();toast(\'Snapshot criado\',\'success\')">+ Criar snapshot agora</button></div>';
 }
 
+let _tecnicosConfigCache=[];
+async function loadTecnicosConfig(){
+  const el=document.getElementById('tecnicosConfigBody'); if(el) el.innerHTML='<div style="font-size:12px;color:var(--text2)">Carregando...</div>';
+  try{ const d=await gsGet('getTecnicos'); _tecnicosConfigCache=d.tecnicos||[]; renderTecnicosConfig(); }
+  catch(e){ if(el) el.innerHTML=`<div class="empty"><div class="empty-title">Erro ao carregar técnicos</div><div class="empty-sub">${osEscape(e.message)}</div></div>`; }
+}
+function renderTecnicosConfig(){
+  const el=document.getElementById('tecnicosConfigBody'); if(!el) return;
+  if(!_tecnicosConfigCache.length){ el.innerHTML='<div class="empty"><div class="empty-title">Nenhum técnico cadastrado</div></div>'; return; }
+  el.innerHTML=`<div class="table-wrap"><table class="mach-table"><thead><tr><th>ID</th><th>Nome</th><th>Status</th><th></th></tr></thead><tbody>${_tecnicosConfigCache.map(t=>`<tr><td>${osEscape(t.id)}</td><td>${osEscape(t.nome)}</td><td>${(t.ativo===false||t.ativo==='false')?'inativo':'ativo'}</td><td><button class="btn btn-secondary btn-sm" onclick="toggleTecnicoAtivo('${osEscape(t.id)}')">${(t.ativo===false||t.ativo==='false')?'Ativar':'Inativar'}</button></td></tr>`).join('')}</tbody></table></div>`;
+}
+function openTecnicoModal(){
+  const html=`<div class="overlay open" id="modalTecnico"><div class="modal"><div class="modal-title">👷 Novo Técnico</div>
+    <div class="form-group"><label class="form-label">Nome</label><input class="form-input" id="tecNome" placeholder="Nome completo"></div>
+    <div class="form-group"><label class="form-label">PIN</label><input class="form-input" id="tecPin" type="password" placeholder="PIN (ex: 1234)" maxlength="8"></div>
+    <label style="font-size:13px"><input id="tecAtivo" type="checkbox" checked> Ativo</label>
+    <div class="modal-footer"><button class="btn btn-secondary" onclick="document.getElementById('modalTecnico').remove()">Cancelar</button><button class="btn btn-primary" onclick="saveTecnicoConfig()">Salvar</button></div>
+  </div></div>`;
+  document.body.insertAdjacentHTML('beforeend', html);
+}
+async function saveTecnicoConfig(){
+  const nome=document.getElementById('tecNome')?.value.trim()||''; const pin=document.getElementById('tecPin')?.value||'';
+  if(!nome||!pin) return toast('Informe nome e PIN','warning');
+  try{ await syncToGS('saveTecnico',{nome,pin,ativo:document.getElementById('tecAtivo').checked}); document.getElementById('modalTecnico')?.remove(); toast('Técnico salvo'); loadTecnicosConfig(); }catch(e){ toast('Erro técnico: '+e.message,'error'); }
+}
+async function toggleTecnicoAtivo(id){
+  const t=_tecnicosConfigCache.find(x=>String(x.id)===String(id)); if(!t) return;
+  try{ await syncToGS('saveTecnico',{id:t.id,nome:t.nome,ativo:(t.ativo===false||t.ativo==='false')}); toast('Status atualizado'); loadTecnicosConfig(); }catch(e){ toast('Erro técnico: '+e.message,'error'); }
+}
+
 function renderConfigStats(){
   const el=document.getElementById('viewConfig');
   const nParts=db.models.reduce((a,m)=>{
@@ -5984,6 +6035,14 @@ function renderConfigStats(){
         <button class="btn btn-secondary" onclick="auditCreateBackup()">Criar backup</button>
       </div>
       <div id="auditResult" style="font-size:12px;color:var(--text2);min-height:24px"></div>
+    </div>
+
+    <div class="card" style="margin-bottom:12px">
+      <div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap">
+        <div><div style="font-size:13px;font-weight:600;margin-bottom:4px">Técnicos</div><div style="font-size:12px;color:var(--text2)">Gerencie PINs e status dos técnicos do PCF.</div></div>
+        <button class="btn btn-primary btn-sm" onclick="openTecnicoModal()">+ Novo Técnico</button>
+      </div>
+      <div id="tecnicosConfigBody" style="margin-top:10px"><button class="btn btn-secondary btn-sm" onclick="loadTecnicosConfig()">Carregar técnicos</button></div>
     </div>
 
     <div class="stats-grid" style="margin-bottom:12px">
@@ -6043,6 +6102,7 @@ function renderConfigStats(){
     </div>
   `;
   if(gsUrl) document.getElementById('gsUrlInput').value=gsUrl;
+    loadTecnicosConfig();
 }
 
 async function resyncCatalogToGS(){
