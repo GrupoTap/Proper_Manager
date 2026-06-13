@@ -524,7 +524,7 @@ tr:hover td{background:var(--gray-50)}
       <div class="login-logo-mark">PC</div>
       <div class="login-logo-text">Proper Compressores</div>
     </div>
-    <div class="login-sub">ProperCare Manager · v3.20 — Acesso restrito</div>
+    <div class="login-sub">ProperCare Manager · v3.21 — Acesso restrito</div>
     <label class="login-label">Senha de acesso</label>
     <input class="login-input" type="password" id="loginInput" placeholder="••••••"
            maxlength="20" onkeydown="if(event.key==='Enter')loginEntrar()">
@@ -538,11 +538,12 @@ tr:hover td{background:var(--gray-50)}
     <div class="logo-mark">PC</div>
     <div class="logo-text">Proper Compressores</div>
     <div class="logo-sep"></div>
-    <div class="logo-sub">PCM v3.20</div>
+    <div class="logo-sub">PCM v3.21</div>
   </div>
   <nav class="header-nav">
     <button class="nav-btn active" onclick="showView('dashboard')" id="navDashboard">Dashboard</button>
     <button class="nav-btn" onclick="showView('preventivas')" id="navPreventivas">Controle de Preventivas</button>
+    <button class="nav-btn" onclick="showView('os')" id="navOs">Ordens de Serviço</button>
     <button class="nav-btn" onclick="showView('machines')" id="navMachines">Máquinas</button>
     <button class="nav-btn" onclick="showView('catalog')" id="navCatalog">Catálogo</button>
     <button class="nav-btn" onclick="showView('clients')" id="navClients">Clientes</button>
@@ -589,6 +590,8 @@ tr:hover td{background:var(--gray-50)}
     <div id="viewDashboard"></div>
     <!-- PREVENTIVAS VIEW -->
     <div id="viewPreventivas" style="display:none"></div>
+    <!-- ORDENS DE SERVIÇO VIEW -->
+    <div id="viewOs" style="display:none"></div>
     <!-- CATALOG VIEW -->
     <div id="viewCatalog" style="display:none"></div>
     <!-- MACHINES VIEW -->
@@ -2523,7 +2526,7 @@ async function auditCreateBackup() {
 // ═══════════════════════════════════════════════════════════
 function showView(v){
   currentView=v;
-  const allViews=['dashboard','preventivas','catalog','machines','clients','estoque','config'];
+  const allViews=['dashboard','preventivas','os','catalog','machines','clients','estoque','config'];
   allViews.forEach(x=>{
     const el=document.getElementById('view'+x.charAt(0).toUpperCase()+x.slice(1));
     if(el) el.style.display=x===v?'':'none';
@@ -2539,6 +2542,8 @@ function showView(v){
     renderDashboard();
   } else if(v==='preventivas'){
     renderPreventivas();
+  } else if(v==='os'){
+    renderOSView();
   } else if(v==='catalog'){
     document.getElementById('sidebarNewLabel').textContent='Novo modelo';
     document.getElementById('sidebarNewBtn').onclick=()=>openModalModel();
@@ -2556,6 +2561,75 @@ function showView(v){
     renderConfigStats();
     if(gsUrl) document.getElementById('gsUrlInput').value=gsUrl;
   }
+}
+
+
+// ═══════════════════════════════════════════════════════════
+// ORDENS DE SERVIÇO — Fase 1 (PCM v29)
+// ═══════════════════════════════════════════════════════════
+let _osCache=[];
+let _osFilters={status:'', tecnico:'', cliente:'', de:'', ate:''};
+function osEscape(v){return String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));}
+function osParseArray(v){ if(Array.isArray(v)) return v; try{const a=JSON.parse(v||'[]'); return Array.isArray(a)?a:[];}catch(e){return [];} }
+function osBadge(status){ const s=String(status||'aberta'); const cls=s==='concluida'?'badge-ok':s==='em_andamento'?'badge-alerta':'badge-sem'; return `<span class="${cls}">${osEscape(s)}</span>`; }
+function renderOSView(){
+  const el=document.getElementById('viewOs'); if(!el) return;
+  el.innerHTML=`<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;gap:10px;flex-wrap:wrap">
+    <div><div style="font-size:18px;font-weight:700">Ordens de Serviço</div><div style="font-size:12px;color:var(--text2);margin-top:2px">Fase 1 · criação, filtros, anexos Drive e relatório PDF</div></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-secondary" onclick="loadOSList()">↻ Atualizar</button><button class="btn btn-primary" onclick="openOSForm()">+ Nova OS</button></div>
+  </div>
+  <div class="card" style="margin-bottom:12px"><div class="form-row3">
+    <div class="form-group"><label class="form-label">Status</label><select class="form-select" id="osFilterStatus"><option value="">Todos</option><option value="aberta">aberta</option><option value="em_andamento">em_andamento</option><option value="concluida">concluida</option></select></div>
+    <div class="form-group"><label class="form-label">Técnico (id)</label><input class="form-input" id="osFilterTecnico" placeholder="TEC-001"></div>
+    <div class="form-group"><label class="form-label">Cliente</label><input class="form-input" id="osFilterCliente" placeholder="Nome do cliente"></div>
+  </div><div class="form-row">
+    <div class="form-group"><label class="form-label">De</label><input class="form-input" type="date" id="osFilterDe"></div>
+    <div class="form-group"><label class="form-label">Até</label><input class="form-input" type="date" id="osFilterAte"></div>
+  </div><button class="btn btn-secondary btn-sm" onclick="applyOSFilters()">Filtrar</button></div>
+  <div id="osListBody"><div class="empty"><div class="empty-title">Carregando OS...</div></div></div>`;
+  Object.assign(document.getElementById('osFilterStatus'),{value:_osFilters.status});
+  ['Tecnico','Cliente','De','Ate'].forEach(k=>{const el=document.getElementById('osFilter'+k); if(el) el.value=_osFilters[k.toLowerCase()]||'';});
+  loadOSList();
+}
+function applyOSFilters(){ _osFilters={status:osFilterStatus.value,tecnico:osFilterTecnico.value.trim(),cliente:osFilterCliente.value.trim(),de:osFilterDe.value,ate:osFilterAte.value}; loadOSList(); }
+async function loadOSList(){
+  const body=document.getElementById('osListBody'); if(body) body.innerHTML='<div class="empty"><div class="empty-title">Carregando...</div></div>';
+  try{ const d=await gsGet('getOS', Object.fromEntries(Object.entries(_osFilters).filter(([,v])=>v))); _osCache=d.os||[]; renderOSTable(); }
+  catch(e){ if(body) body.innerHTML=`<div class="empty"><div class="empty-title">Erro ao carregar OS</div><div class="empty-sub">${osEscape(e.message)}</div></div>`; }
+}
+function renderOSTable(){
+  const body=document.getElementById('osListBody'); if(!body) return;
+  if(!_osCache.length){body.innerHTML='<div class="empty"><div class="empty-title">Nenhuma OS encontrada</div></div>';return;}
+  body.innerHTML=`<div class="table-wrap"><table class="mach-table"><thead><tr><th>Número</th><th>Cliente</th><th>Status</th><th>Prevista</th><th>Técnicos</th><th>Máquinas</th><th></th></tr></thead><tbody>${_osCache.map(o=>`<tr><td><b>${osEscape(o.numero_os)}</b></td><td>${osEscape(o.cliente)}</td><td>${osBadge(o.status)}</td><td>${osEscape(o.data_prevista||'—')}</td><td>${osParseArray(o.tecnicos_vinculados).map(osEscape).join(', ')||'—'}</td><td>${osParseArray(o.maquinas_vinculadas).length}</td><td><button class="btn btn-secondary btn-sm" onclick="openOSDetail('${osEscape(o.numero_os)}')">Abrir</button></td></tr>`).join('')}</tbody></table></div>`;
+}
+function openOSForm(){
+  const clients=(db.clients||[]).map(c=>c.nome||c.name||c.Nome).filter(Boolean);
+  const machines=(db.machines||[]).map(m=>`<label style="display:block;font-size:12px;margin:3px 0"><input type="checkbox" class="osMachineChk" value="${osEscape(m.id)}"> ${osEscape(m.client||'')} · ${osEscape(m.tag||m.serial||m.model||m.id)}</label>`).join('');
+  const html=`<div class="overlay show" id="modalOS"><div class="modal modal-lg"><div class="modal-title">🧾 Nova Ordem de Serviço</div>
+    <div class="form-row"><div class="form-group"><label class="form-label">Cliente</label><input class="form-input" id="osCliente" list="osClients"></div><div class="form-group"><label class="form-label">Data prevista</label><input class="form-input" type="date" id="osPrevista"></div></div>
+    <datalist id="osClients">${clients.map(c=>`<option value="${osEscape(c)}">`).join('')}</datalist>
+    <div class="form-group"><label class="form-label">Técnicos vinculados <span>IDs separados por vírgula; CAT_TECNICOS é a fonte no Sheets</span></label><input class="form-input" id="osTecnicos" placeholder="TEC-001, TEC-002"></div>
+    <div class="form-group"><label class="form-label">Descrição</label><textarea class="form-textarea" id="osDesc"></textarea></div>
+    <div class="form-group"><label class="form-label">Máquinas sugeridas</label><div style="max-height:180px;overflow:auto;border:1px solid var(--border);border-radius:var(--radius);padding:8px">${machines||'Cadastre/sincronize máquinas primeiro.'}</div></div>
+    <div class="modal-footer"><button class="btn btn-secondary" onclick="document.getElementById('modalOS').remove()">Cancelar</button><button class="btn btn-primary" onclick="saveOSFromPCM()">Salvar OS</button></div>
+  </div></div>`;
+  document.body.insertAdjacentHTML('beforeend', html);
+}
+async function saveOSFromPCM(){
+  const payload={cliente:osCliente.value.trim(),data_prevista:osPrevista.value,descricao:osDesc.value.trim(),tecnicos_vinculados:osTecnicos.value.split(',').map(s=>s.trim()).filter(Boolean),maquinas_vinculadas:[...document.querySelectorAll('.osMachineChk:checked')].map(x=>x.value)};
+  if(!payload.cliente) return toast('Informe o cliente','warning');
+  try{ await syncToGS('saveOS', payload); document.getElementById('modalOS')?.remove(); toast('OS salva'); loadOSList(); }catch(e){ toast('Erro OS: '+e.message,'error'); }
+}
+async function openOSDetail(numero){
+  const o=_osCache.find(x=>String(x.numero_os)===String(numero)); if(!o) return;
+  let attachments=[]; try{attachments=(await gsGet('getAttachments',{osNumero:numero})).attachments||[];}catch(e){console.warn(e);}
+  const gal=attachments.map(a=>`<a href="${osEscape(a.File_URL)}" target="_blank" style="display:inline-block;border:1px solid var(--border);border-radius:8px;padding:8px;margin:4px;font-size:11px;text-decoration:none;color:var(--text1)">📎 ${osEscape(a.Attachment_Type||'arquivo')}<br><span style="color:var(--text3)">${osEscape(a.File_Name||'')}</span></a>`).join('')||'<div style="font-size:12px;color:var(--text3)">Sem anexos no TECH_ATTACHMENTS.</div>';
+  const html=`<div class="overlay show" id="modalOSDetail"><div class="modal modal-lg"><div class="modal-title">🧾 OS ${osEscape(o.numero_os)}</div>
+  <div style="font-size:13px;line-height:1.6"><b>Cliente:</b> ${osEscape(o.cliente)}<br><b>Status:</b> ${osBadge(o.status)}<br><b>Descrição:</b> ${osEscape(o.descricao||'—')}<br><b>Técnicos:</b> ${osParseArray(o.tecnicos_vinculados).map(osEscape).join(', ')||'—'}<br><b>Máquinas:</b> ${osParseArray(o.maquinas_vinculadas).map(osEscape).join(', ')||'—'}<br>${o.id_visita_resultado?`<b>Visita:</b> ${osEscape(o.id_visita_resultado)}<br>`:''}</div>
+  <div style="margin:12px 0;display:flex;gap:8px;flex-wrap:wrap">${o.drive_folder_url?`<a class="btn btn-secondary" target="_blank" href="${osEscape(o.drive_folder_url)}">Ver pasta no Drive</a>`:''}${o.pdf_url?`<a class="btn btn-primary" target="_blank" href="${osEscape(o.pdf_url)}">Ver relatório PDF</a>`:''}</div>
+  <div class="sec-title" style="margin:10px 0">Galeria de anexos</div><div>${gal}</div>
+  <div class="modal-footer"><button class="btn btn-secondary" onclick="document.getElementById('modalOSDetail').remove()">Fechar</button></div></div></div>`;
+  document.body.insertAdjacentHTML('beforeend', html);
 }
 
 // ═══════════════════════════════════════════════════════════
