@@ -114,7 +114,7 @@ body{font-family:'IBM Plex Sans',system-ui,sans-serif;background:#eceff5;color:v
 .tab-btn.active .badge{background:var(--blue-light);color:var(--blue-mid)}
 
 /* ── TABLE ── */
-.table-wrap{border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
+.table-wrap{border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;overflow-x:auto}
 table{width:100%;border-collapse:collapse}
 th{text-align:left;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--text3);padding:7px 12px;border-bottom:1px solid var(--border);background:var(--gray-50)}
 td{padding:8px 12px;border-bottom:1px solid var(--gray-100);color:var(--text);vertical-align:top}
@@ -2569,62 +2569,140 @@ function showView(v){
 // ORDENS DE SERVIÇO — Fase 1 (PCM v30)
 // ═══════════════════════════════════════════════════════════
 let _osCache=[];
-let _osFilters={status:'', tecnico:'', cliente:'', de:'', ate:''};
+let _tecnicosOSCache=null;
+let _osFilters={status:'', tecnico:'', cliente:'', de:'', ate:'', tipo_os:''};
 function osEscape(v){return String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));}
 function osParseArray(v){ if(Array.isArray(v)) return v; try{const a=JSON.parse(v||'[]'); return Array.isArray(a)?a:[];}catch(e){return [];} }
-function osBadge(status){ const s=String(status||'aberta'); const cls=s==='concluida'?'badge-ok':s==='em_andamento'?'badge-alerta':'badge-sem'; return `<span class="${cls}">${osEscape(s)}</span>`; }
+function osBadge(status){ const s=String(status||'aberta'); const cls=s==='concluida'?'badge-ok':s==='em_andamento'?'badge-alerta':s==='cancelada'?'badge-sem':'badge-sem'; return `<span class="${cls}">${osEscape(osStatusLabel(s))}</span>`; }
+function osStatusLabel(status){
+  const map={aberta:'Aberta',em_andamento:'Em andamento',concluida:'Concluída',cancelada:'Cancelada'};
+  return map[String(status||'aberta')] || String(status||'aberta');
+}
+function osTipoIcon(tipo){
+  const map={'Preventiva':'🔧','Corretiva':'🛠️','Visita Técnica':'📋','Diagnóstico':'🩺'};
+  return map[String(tipo||'Preventiva')] || '🔧';
+}
+function osPrioridadeBadge(p){
+  return String(p||'normal')==='urgente' ? `<span class="badge-alerta" title="Prioridade urgente">⚠ Urgente</span>` : '';
+}
+let _osTecnicosSelecionados=[];
+function osRenderTecnicosChips(tecnicos){
+  if(!tecnicos.length) return '<div style="font-size:12px;color:var(--text3)">Nenhum técnico ativo cadastrado.</div>';
+  return `<div class="chip-row">${tecnicos.map(t=>{
+    const sel=_osTecnicosSelecionados.includes(String(t.id));
+    return `<span class="chip ${sel?'':'gray'}" style="cursor:pointer" onclick="osToggleTecnicoChip('${osEscape(t.id)}')">${sel?'✓ ':''}${osEscape(t.nome||t.id)}</span>`;
+  }).join('')}</div><div style="font-size:11px;color:var(--text3);margin-top:4px">Nenhum selecionado = visível para todos os técnicos ativos.</div>`;
+}
+function osToggleTecnicoChip(id){
+  const i=_osTecnicosSelecionados.indexOf(String(id));
+  if(i>=0) _osTecnicosSelecionados.splice(i,1); else _osTecnicosSelecionados.push(String(id));
+  const holder=document.getElementById('osTecnicosChips');
+  if(holder) holder.innerHTML=osRenderTecnicosChips(_osTecnicosFormCache||[]);
+}
 function renderOSView(){
   const el=document.getElementById('viewOs'); if(!el) return;
   el.innerHTML=`<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;gap:10px;flex-wrap:wrap">
-    <div><div style="font-size:18px;font-weight:700">Ordens de Serviço</div><div style="font-size:12px;color:var(--text2);margin-top:2px">Fase 1 · criação, filtros, anexos Drive e relatório PDF</div></div>
+    <div><div style="font-size:18px;font-weight:700">Ordens de Serviço</div><div style="font-size:12px;color:var(--text2);margin-top:2px">Criação, vínculo de máquinas, histórico, anexos e relatórios em PDF</div></div>
     <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-secondary" onclick="loadOSList()">↻ Atualizar</button><button class="btn btn-primary" onclick="openOSForm()">+ Nova OS</button></div>
   </div>
   <div class="card" style="margin-bottom:12px"><div class="form-row3">
-    <div class="form-group"><label class="form-label">Status</label><select class="form-select" id="osFilterStatus"><option value="">Todos</option><option value="aberta">aberta</option><option value="em_andamento">em_andamento</option><option value="concluida">concluida</option></select></div>
-    <div class="form-group"><label class="form-label">Técnico (id)</label><input class="form-input" id="osFilterTecnico" placeholder="TEC-001"></div>
+    <div class="form-group"><label class="form-label">Status</label><select class="form-select" id="osFilterStatus">
+      <option value="">Abertas/Em andamento</option>
+      <option value="aberta">Aberta</option>
+      <option value="em_andamento">Em andamento</option>
+      <option value="concluida">Concluída</option>
+      <option value="cancelada">Cancelada</option>
+      <option value="__todas__">Todas (inclui encerradas)</option>
+    </select></div>
+    <div class="form-group"><label class="form-label">Tipo de OS</label><select class="form-select" id="osFilterTipo">
+      <option value="">Todos</option><option>Preventiva</option><option>Corretiva</option><option>Visita Técnica</option><option>Diagnóstico</option>
+    </select></div>
     <div class="form-group"><label class="form-label">Cliente</label><input class="form-input" id="osFilterCliente" placeholder="Nome do cliente"></div>
-  </div><div class="form-row">
+  </div><div class="form-row3">
+    <div class="form-group"><label class="form-label">Técnico</label><select class="form-select" id="osFilterTecnico"><option value="">Todos</option></select></div>
     <div class="form-group"><label class="form-label">De</label><input class="form-input" type="date" id="osFilterDe"></div>
     <div class="form-group"><label class="form-label">Até</label><input class="form-input" type="date" id="osFilterAte"></div>
   </div><button class="btn btn-secondary btn-sm" onclick="applyOSFilters()">Filtrar</button></div>
   <div id="osListBody"><div class="empty"><div class="empty-title">Carregando OS...</div></div></div>`;
   Object.assign(document.getElementById('osFilterStatus'),{value:_osFilters.status});
-  ['Tecnico','Cliente','De','Ate'].forEach(k=>{const el=document.getElementById('osFilter'+k); if(el) el.value=_osFilters[k.toLowerCase()]||'';});
+  ['Tecnico','Cliente','De','Ate','Tipo'].forEach(k=>{const e=document.getElementById('osFilter'+k); if(e) e.value=_osFilters[k.toLowerCase()]||'';});
+  osPopulateFilterTecnicos();
   loadOSList();
 }
-function applyOSFilters(){ _osFilters={status:osFilterStatus.value,tecnico:osFilterTecnico.value.trim(),cliente:osFilterCliente.value.trim(),de:osFilterDe.value,ate:osFilterAte.value}; loadOSList(); }
+async function osPopulateFilterTecnicos(){
+  const sel=document.getElementById('osFilterTecnico'); if(!sel) return;
+  try{
+    const d=await gsGet('getTecnicos');
+    const tecnicos=d.tecnicos||[];
+    sel.innerHTML='<option value="">Todos</option>'+tecnicos.map(t=>`<option value="${osEscape(t.id)}">${osEscape(t.nome||t.id)}</option>`).join('');
+    sel.value=_osFilters.tecnico||'';
+  }catch(e){ /* mantém "Todos" se falhar */ }
+}
+function applyOSFilters(){
+  _osFilters={status:osFilterStatus.value,tecnico:osFilterTecnico.value.trim(),cliente:osFilterCliente.value.trim(),de:osFilterDe.value,ate:osFilterAte.value,tipo_os:osFilterTipo.value};
+  loadOSList();
+}
 async function loadOSList(){
   const body=document.getElementById('osListBody'); if(body) body.innerHTML='<div class="empty"><div class="empty-title">Carregando...</div></div>';
-  try{ const d=await gsGet('getOS', Object.fromEntries(Object.entries(_osFilters).filter(([,v])=>v))); _osCache=d.os||[]; renderOSTable(); }
-  catch(e){ if(body) body.innerHTML=`<div class="empty"><div class="empty-title">Erro ao carregar OS</div><div class="empty-sub">${osEscape(e.message)}</div></div>`; }
+  try{
+    if(!_tecnicosOSCache){ try{ _tecnicosOSCache=(await gsGet('getTecnicos')).tecnicos||[]; }catch(e){ _tecnicosOSCache=[]; } }
+    const params={};
+    if(_osFilters.status==='__todas__'){ params.includeClosed='true'; }
+    else if(_osFilters.status){ params.status=_osFilters.status; if(_osFilters.status==='concluida'||_osFilters.status==='cancelada') params.includeClosed='true'; }
+    if(_osFilters.tecnico) params.id_tecnico=_osFilters.tecnico;
+    if(_osFilters.cliente) params.cliente=_osFilters.cliente;
+    if(_osFilters.de) params.de=_osFilters.de;
+    if(_osFilters.ate) params.ate=_osFilters.ate;
+    if(_osFilters.tipo_os) params.tipo_os=_osFilters.tipo_os;
+    const d=await gsGet('getOS', params);
+    _osCache=d.os||[];
+    renderOSTable();
+  }catch(e){ if(body) body.innerHTML=`<div class="empty"><div class="empty-title">Erro ao carregar OS</div><div class="empty-sub">${osEscape(e.message)}</div></div>`; }
 }
 function renderOSTable(){
   const body=document.getElementById('osListBody'); if(!body) return;
   if(!_osCache.length){body.innerHTML='<div class="empty"><div class="empty-title">Nenhuma OS encontrada</div></div>';return;}
-  body.innerHTML=`<div class="table-wrap"><table class="mach-table"><thead><tr><th>Número</th><th>Cliente</th><th>Status</th><th>Tipo</th><th>Prevista</th><th>Técnicos</th><th>Máquinas</th><th></th></tr></thead><tbody>${_osCache.map(o=>`<tr><td><b>${osEscape(o.numero_os)}</b></td><td>${osEscape(o.cliente)}</td><td>${osBadge(o.status)}</td><td>${osEscape(o.tipo_os||'Preventiva')}</td><td>${osEscape(o.data_prevista||'—')}</td><td>${osParseArray(o.tecnicos_vinculados).map(osEscape).join(', ')||'—'}</td><td>${osParseArray(o.maquinas_vinculadas).length}</td><td><button class="btn btn-secondary btn-sm" onclick="openOSDetail('${osEscape(o.numero_os)}')">Abrir</button></td></tr>`).join('')}</tbody></table></div>`;
+  const tecMap=Object.fromEntries((_tecnicosOSCache||[]).map(t=>[String(t.id),t.nome||t.id]));
+  body.innerHTML=`<div class="table-wrap"><table class="mach-table"><thead><tr><th>Número</th><th>Cliente</th><th>Tipo</th><th>Status</th><th>Prevista</th><th>Técnicos</th><th>Máquinas</th><th></th><th></th></tr></thead><tbody>${_osCache.map(o=>{
+    const tecs=osParseArray(o.tecnicos_vinculados);
+    const tecLabel=tecs.length?tecs.map(id=>osEscape(tecMap[id]||id)).join(', '):'<span style="color:var(--text3)">Todos</span>';
+    return `<tr><td><b>${osEscape(o.numero_os)}</b> ${osPrioridadeBadge(o.prioridade)}</td><td>${osEscape(o.cliente)}</td><td>${osTipoIcon(o.tipo_os)} ${osEscape(o.tipo_os||'Preventiva')}</td><td>${osBadge(o.status)}</td><td>${osEscape(o.data_prevista||'—')}</td><td style="font-size:12px">${tecLabel}</td><td>${o.total_maquinas ?? osParseArray(o.maquinas_vinculadas).length}</td><td><button class="btn btn-secondary btn-sm" onclick="openOSDetail('${osEscape(o.id_os)}')">Abrir</button></td><td></td></tr>`;
+  }).join('')}</tbody></table></div>`;
 }
+let _osTecnicosFormCache=[];
 async function openOSForm(){
-  const clients=(db.clients||[]).map(c=>c.nome||c.name||c.Nome).filter(Boolean);
-  let tecnicos=[];
-  let tecError='';
+  _osTecnicosSelecionados=[];
+  let tecnicos=[]; let tecError='';
   try{
     const d=await gsGet('getTecnicos');
-    tecnicos=(d.tecnicos||[]).filter(t=>t.ativo!==false && t.ativo!=='false');
+    tecnicos=d.tecnicos||[];
+    _tecnicosOSCache=tecnicos;
   }catch(e){ tecError=e.message||'Falha ao carregar técnicos'; }
-  const tecOptions=tecnicos.map(t=>`<option value="${osEscape(t.id)}">${osEscape(t.nome||t.id)}</option>`).join('');
+  _osTecnicosFormCache=tecnicos;
   const tecWarn=!tecnicos.length ? `<div class="info-box" style="margin-top:8px;color:var(--danger)">${osEscape(tecError||'Nenhum técnico cadastrado. Cadastre em Configurações > Técnicos.')}</div>` : '';
-  const machines=(db.machines||[]).map(m=>`<label style="display:block;font-size:12px;margin:3px 0"><input type="checkbox" class="osMachineChk" value="${osEscape(m.id)}" data-client="${osEscape(m.client||'')}"> ${osEscape(m.client||'')} · ${osEscape(m.tag||m.serial||m.model||m.id)}</label>`).join('');
+  const clientOptions=(db.clients||[]).map(c=>`<option value="${osEscape(c.id)}">${osEscape(c.nome||c.name||c.Nome||c.id)}</option>`).join('');
+  const machines=(db.machines||[]).map(m=>`<label style="display:block;font-size:12px;margin:3px 0"><input type="checkbox" class="osMachineChk" value="${osEscape(m.id)}" data-client="${osEscape(m.client||'')}" data-client-id="${osEscape(m.id_cliente||'')}"> ${osEscape(m.client||'')} · ${osEscape(m.tag||m.serial||m.model||m.id)}</label>`).join('');
   const html=`<div class="overlay open" id="modalOS"><div class="modal modal-lg"><div class="modal-title">🧾 Nova Ordem de Serviço</div>
-    <div class="form-row"><div class="form-group"><label class="form-label">Cliente</label><input class="form-input" id="osCliente" list="osClients" onchange="osFilterMachines()"></div><div class="form-group"><label class="form-label">Data prevista</label><input class="form-input" type="date" id="osPrevista"></div></div>
-    <datalist id="osClients">${clients.map(c=>`<option value="${osEscape(c)}">`).join('')}</datalist>
-    <div class="form-row"><div class="form-group"><label class="form-label">Tipo de OS</label><select class="form-select" id="osTipo"><option selected>Preventiva</option><option>Corretiva</option><option>Visita Técnica</option><option>Diagnóstico</option><option>Genérica</option></select></div>
-    <div class="form-group"><label class="form-label">Técnicos</label><select class="form-select" id="osTecnicosSelect" multiple size="3">${tecOptions}</select>${tecWarn}</div></div>
-    <div class="form-group"><label class="form-label">Descrição</label><textarea class="form-textarea" id="osDesc"></textarea></div>
-    <div class="form-group"><label class="form-label">Máquinas sugeridas</label><div style="max-height:180px;overflow:auto;border:1px solid var(--border);border-radius:var(--radius);padding:8px">${machines||'Cadastre/sincronize máquinas primeiro.'}</div></div>
-    <div class="modal-footer"><button class="btn btn-secondary" onclick="document.getElementById('modalOS').remove()">Cancelar</button><button class="btn btn-primary" ${!tecnicos.length?'disabled':''} onclick="saveOSFromPCM()">Salvar OS</button></div>
+    <div id="osFormError"></div>
+    <div class="form-row"><div class="form-group"><label class="form-label">Cliente</label><select class="form-select" id="osClienteId" onchange="osFilterMachinesById()"><option value="">Selecione...</option>${clientOptions}</select></div><div class="form-group"><label class="form-label">Data prevista</label><input class="form-input" type="date" id="osPrevista"></div></div>
+    <div class="form-row"><div class="form-group"><label class="form-label">Número da OS (opcional)</label><input class="form-input" id="osNumero" placeholder="gerado automaticamente se vazio"></div>
+    <div class="form-group"><label class="form-label">Prioridade</label><select class="form-select" id="osPrioridade"><option value="normal" selected>Normal</option><option value="urgente">Urgente</option></select></div></div>
+    <div class="form-row"><div class="form-group"><label class="form-label">Tipo de OS</label><select class="form-select" id="osTipo"><option selected>Preventiva</option><option>Corretiva</option><option>Visita Técnica</option><option>Diagnóstico</option></select></div>
+    <div class="form-group"><label class="form-label">Data de abertura</label><input class="form-input" type="date" id="osAbertura" value="${new Date().toISOString().slice(0,10)}"></div></div>
+    <div class="form-group"><label class="form-label">Descrição</label><textarea class="form-textarea" id="osDesc" placeholder="Descrição do atendimento solicitado"></textarea></div>
+    <div class="form-group"><label class="form-label">Técnicos vinculados</label><div id="osTecnicosChips">${osRenderTecnicosChips(tecnicos)}</div>${tecWarn}</div>
+    <div class="form-group"><label class="form-label">Máquinas (do cliente selecionado)</label><div id="osMachinesList" style="max-height:180px;overflow:auto;border:1px solid var(--border);border-radius:var(--radius);padding:8px">${machines||'Selecione um cliente.'}</div></div>
+    <div class="modal-footer"><button class="btn btn-secondary" onclick="document.getElementById('modalOS').remove()">Cancelar</button><button class="btn btn-primary" onclick="saveOSFromPCM()">Salvar OS</button></div>
   </div></div>`;
   document.body.insertAdjacentHTML('beforeend', html);
-  osFilterMachines();
+  osFilterMachinesById();
+}
+function osFilterMachinesById(){
+  const idCliente=document.getElementById('osClienteId')?.value||'';
+  document.querySelectorAll('.osMachineChk').forEach(function(chk){
+    const match = !idCliente || chk.dataset.clientId===idCliente;
+    chk.closest('label').style.display = match ? 'block' : 'none';
+  });
 }
 function osFilterMachines(){
   const clienteNorm = (document.getElementById('osCliente')?.value||'').trim().toLowerCase();
@@ -2635,22 +2713,187 @@ function osFilterMachines(){
   });
 }
 async function saveOSFromPCM(){
-  const payload={cliente:osCliente.value.trim(),data_prevista:osPrevista.value,descricao:osDesc.value.trim(),tipo_os:document.getElementById('osTipo')?.value||'Preventiva',tecnicos_vinculados:[...document.querySelectorAll('#osTecnicosSelect option:checked')].map(o=>o.value),maquinas_vinculadas:[...document.querySelectorAll('.osMachineChk:checked')].map(x=>x.value)};
-  payload.id_cliente=(db.clients||[]).find(c=>(c.nome||c.name||c.Nome||'').toLowerCase().trim()===payload.cliente.toLowerCase().trim())?.id || '';
-  if(!payload.cliente) return toast('Informe o cliente','warning');
-  if(!payload.tecnicos_vinculados.length) return toast('Selecione ao menos um técnico','warning');
-  try{ await syncToGS('saveOS', payload); document.getElementById('modalOS')?.remove(); toast('OS salva'); loadOSList(); }catch(e){ toast('Erro OS: '+e.message,'error'); }
+  const errBox=document.getElementById('osFormError'); if(errBox) errBox.innerHTML='';
+  const idCliente=document.getElementById('osClienteId')?.value||'';
+  const cliente=(db.clients||[]).find(c=>String(c.id)===idCliente);
+  const descricao=osDesc.value.trim();
+  if(!idCliente) return toast('Selecione o cliente','warning');
+  if(!descricao) return toast('Descrição é obrigatória','warning');
+  const payload={
+    id_cliente:idCliente,
+    cliente:cliente?.nome||cliente?.name||cliente?.Nome||'',
+    numero_os:document.getElementById('osNumero')?.value.trim()||'',
+    data_abertura:document.getElementById('osAbertura')?.value||'',
+    data_prevista:osPrevista.value,
+    descricao:descricao,
+    tipo_os:document.getElementById('osTipo')?.value||'Preventiva',
+    prioridade:document.getElementById('osPrioridade')?.value||'normal',
+    tecnicos_vinculados:_osTecnicosSelecionados.slice(),
+    maquinas_vinculadas:[...document.querySelectorAll('.osMachineChk:checked')].map(x=>x.value)
+  };
+  try{
+    await syncToGS('saveOS', payload);
+    document.getElementById('modalOS')?.remove();
+    toast('OS criada com sucesso');
+    loadOSList();
+  }catch(e){
+    if(errBox) errBox.innerHTML=`<div class="info-box" style="color:var(--danger);margin-bottom:8px">${osEscape(e.message)}</div>`;
+    toast('Erro ao salvar OS: '+e.message,'error');
+  }
 }
-async function openOSDetail(numero){
-  const o=_osCache.find(x=>String(x.numero_os)===String(numero)); if(!o) return;
-  let attachments=[]; try{attachments=(await gsGet('getAttachments',{osNumero:numero})).attachments||[];}catch(e){console.warn(e);}
-  const gal=attachments.map(a=>`<a href="${osEscape(a.File_URL)}" target="_blank" style="display:inline-block;border:1px solid var(--border);border-radius:8px;padding:8px;margin:4px;font-size:11px;text-decoration:none;color:var(--text1)">📎 ${osEscape(a.Attachment_Type||'arquivo')}<br><span style="color:var(--text3)">${osEscape(a.File_Name||'')}</span></a>`).join('')||'<div style="font-size:12px;color:var(--text3)">Sem anexos no TECH_ATTACHMENTS.</div>';
-  const html=`<div class="overlay open" id="modalOSDetail"><div class="modal modal-lg"><div class="modal-title">🧾 OS ${osEscape(o.numero_os)}</div>
-  <div style="font-size:13px;line-height:1.6"><b>Cliente:</b> ${osEscape(o.cliente)}<br><b>Status:</b> ${osBadge(o.status)}<br><b>Tipo:</b> ${osEscape(o.tipo_os||'Preventiva')}<br><b>Descrição:</b> ${osEscape(o.descricao||'—')}<br><b>Técnicos:</b> ${osParseArray(o.tecnicos_vinculados).map(osEscape).join(', ')||'—'}<br><b>Máquinas:</b> ${osParseArray(o.maquinas_vinculadas).map(osEscape).join(', ')||'—'}<br>${o.id_visita_resultado?`<b>Visita:</b> ${osEscape(o.id_visita_resultado)}<br>`:''}</div>
-  <div style="margin:12px 0;display:flex;gap:8px;flex-wrap:wrap">${o.drive_folder_url?`<a class="btn btn-secondary" target="_blank" href="${osEscape(o.drive_folder_url)}">Ver pasta no Drive</a>`:''}${o.pdf_url?`<a class="btn btn-primary" target="_blank" href="${osEscape(o.pdf_url)}">Ver relatório PDF</a>`:''}</div>
-  <div class="sec-title" style="margin:10px 0">Galeria de anexos</div><div>${gal}</div>
-  <div class="modal-footer"><button class="btn btn-secondary" onclick="document.getElementById('modalOSDetail').remove()">Fechar</button></div></div></div>`;
+let _osDetailAtual=null;
+async function openOSDetail(idOs){
+  let o=_osCache.find(x=>String(x.id_os)===String(idOs)||String(x.numero_os)===String(idOs));
+  if(!o) return;
+  _osDetailAtual=o;
+  document.body.insertAdjacentHTML('beforeend', `<div class="overlay open" id="modalOSDetail"><div class="modal modal-lg"><div id="osDetailBody"><div class="empty"><div class="empty-title">Carregando...</div></div></div></div></div>`);
+  await osRenderDetail();
+}
+async function osRenderDetail(){
+  const o=_osDetailAtual; if(!o) return;
+  const body=document.getElementById('osDetailBody'); if(!body) return;
+
+  let machinesData={machines:[],total:0,missing_machine_ids:[]};
+  try{ machinesData=await gsGet('getMaquinasByOS',{id_os:o.id_os}); }catch(e){ console.warn(e); }
+
+  let attachments=[];
+  try{ attachments=(await gsGet('getAttachments',{entityId:o.id_os})).attachments||[]; }catch(e){ console.warn(e); }
+  if(!attachments.length){ try{ attachments=(await gsGet('getAttachments',{osNumero:o.numero_os})).attachments||[]; }catch(e){} }
+
+  let eventos=[];
+  try{ eventos=(await gsGet('getLogOperacional',{id_os:o.id_os,limit:30})).eventos||[]; }catch(e){ console.warn(e); }
+
+  const tecMap=Object.fromEntries((_tecnicosOSCache||[]).map(t=>[String(t.id),t.nome||t.id]));
+  const tecs=osParseArray(o.tecnicos_vinculados);
+  const tecLabel=tecs.length?tecs.map(id=>osEscape(tecMap[id]||id)).join(', '):'Todos os técnicos ativos';
+
+  const gal=attachments.map(a=>`<a href="${osEscape(a.File_URL)}" target="_blank" style="display:inline-block;border:1px solid var(--border);border-radius:8px;padding:8px;margin:4px;font-size:11px;text-decoration:none;color:var(--text1)">📎 ${osEscape(a.Attachment_Type||'arquivo')}<br><span style="color:var(--text3)">${osEscape(a.File_Name||'')}</span></a>`).join('')||'<div style="font-size:12px;color:var(--text3)">Sem anexos.</div>';
+
+  const machinesRows=(machinesData.machines||[]).map(m=>{
+    const statAtend=m.status_atendimento||'pendente';
+    const cls=statAtend==='atendida'?'badge-ok':statAtend==='nao_atendida'?'badge-sem':'badge-alerta';
+    return `<tr><td>${osEscape(m.client||'')}</td><td>${osEscape(m.tag||m.serial||m.model||m.id)}</td><td><span class="${cls}">${osEscape(statAtend)}</span></td><td><button class="btn btn-secondary btn-sm" onclick="osDesvincularMaquina('${osEscape(m.id)}')">Desvincular</button></td></tr>`;
+  }).join('')||'<tr><td colspan="4" style="text-align:center;color:var(--text3)">Nenhuma máquina vinculada.</td></tr>';
+
+  const eventosRows=eventos.map(ev=>`<div style="font-size:11px;border-left:2px solid var(--border);padding:4px 8px;margin-bottom:4px"><b>${osEscape(ev.tipo_evento||'')}</b> · ${osEscape((ev.timestamp||'').replace('T',' ').slice(0,19))} · ${osEscape(ev.responsavel_nome||'')}${ev.observacao?` — ${osEscape(ev.observacao)}`:''}</div>`).join('')||'<div style="font-size:12px;color:var(--text3)">Sem eventos registrados.</div>';
+
+  const statusAtual=o.status||'aberta';
+  const acoes=[];
+  if(statusAtual==='aberta'||statusAtual==='em_andamento'){
+    acoes.push(`<button class="btn btn-secondary btn-sm" onclick="osMudarStatus('cancelada')">Cancelar OS</button>`);
+  }
+  if(statusAtual==='concluida'||statusAtual==='cancelada'){
+    acoes.push(`<button class="btn btn-secondary btn-sm" onclick="osReabrir()">Reabrir OS</button>`);
+  }
+
+  body.innerHTML=`<div class="modal-title">🧾 OS ${osEscape(o.numero_os)} ${osPrioridadeBadge(o.prioridade)}</div>
+  <div id="osDetailError"></div>
+  <div style="font-size:13px;line-height:1.7">
+    <b>Cliente:</b> ${osEscape(o.cliente)}<br>
+    <b>Status:</b> ${osBadge(o.status)} &nbsp; <b>Tipo:</b> ${osTipoIcon(o.tipo_os)} ${osEscape(o.tipo_os||'Preventiva')}<br>
+    <b>Descrição:</b> ${osEscape(o.descricao||'—')}<br>
+    <b>Abertura:</b> ${osEscape(o.data_abertura||'—')} &nbsp; <b>Prevista:</b> ${osEscape(o.data_prevista||'—')}<br>
+    <b>Técnicos:</b> ${tecLabel}<br>
+    ${o.observacao_fechamento?`<b>Observação de fechamento:</b> ${osEscape(o.observacao_fechamento)}<br>`:''}
+    ${o.responsavel_cliente?`<b>Responsável do cliente:</b> ${osEscape(o.responsavel_cliente)}<br>`:''}
+  </div>
+  <div style="margin:10px 0;display:flex;gap:8px;flex-wrap:wrap">${acoes.join('')}</div>
+
+  <div class="sec-title" style="margin:10px 0">Máquinas vinculadas (${machinesData.total||0})</div>
+  <div style="display:flex;gap:8px;margin-bottom:8px"><button class="btn btn-secondary btn-sm" onclick="osOpenVincularMaquina()">+ Vincular máquina</button></div>
+  <div class="table-wrap"><table class="mach-table"><thead><tr><th>Cliente</th><th>Máquina</th><th>Atendimento</th><th></th></tr></thead><tbody>${machinesRows}</tbody></table></div>
+  ${(machinesData.missing_machine_ids||[]).length?`<div style="font-size:11px;color:var(--orange);margin-top:4px">⚠ ${machinesData.missing_machine_ids.length} vínculo(s) referenciam máquinas não encontradas no cadastro atual.</div>`:''}
+
+  <div class="sec-title" style="margin:10px 0">Anexos, PDF e assinaturas</div>
+  <div style="margin-bottom:8px;display:flex;gap:8px;flex-wrap:wrap">
+    ${o.drive_folder_url?`<a class="btn btn-secondary btn-sm" target="_blank" href="${osEscape(o.drive_folder_url)}">Pasta no Drive</a>`:''}
+    ${o.pdf_url?`<a class="btn btn-primary btn-sm" target="_blank" href="${osEscape(o.pdf_url)}">Relatório PDF</a>`:''}
+    ${o.assinatura_tecnico_url?`<a class="btn btn-secondary btn-sm" target="_blank" href="${osEscape(o.assinatura_tecnico_url)}">Assinatura técnico</a>`:''}
+    ${o.assinatura_cliente_url?`<a class="btn btn-secondary btn-sm" target="_blank" href="${osEscape(o.assinatura_cliente_url)}">Assinatura cliente</a>`:''}
+  </div>
+  <div>${gal}</div>
+
+  <div class="sec-title" style="margin:10px 0">Histórico de eventos</div>
+  <div style="max-height:200px;overflow:auto">${eventosRows}</div>
+
+  <div class="modal-footer"><button class="btn btn-secondary" onclick="document.getElementById('modalOSDetail').remove()">Fechar</button></div>`;
+}
+async function osMudarStatus(novoStatus){
+  const o=_osDetailAtual; if(!o) return;
+  const errBox=document.getElementById('osDetailError'); if(errBox) errBox.innerHTML='';
+  let payload={id_os:o.id_os,status:novoStatus};
+  if(novoStatus==='cancelada'){
+    const motivo=prompt('Motivo do cancelamento:'); if(motivo===null) return;
+    payload.motivo_cancelamento=motivo;
+    payload.observacao_fechamento=motivo;
+  }
+  try{
+    const r=await syncToGS('saveOS', payload);
+    _osDetailAtual=r.os;
+    toast('OS atualizada');
+    await osRenderDetail();
+    loadOSList();
+  }catch(e){
+    if(errBox) errBox.innerHTML=`<div class="info-box" style="color:var(--danger)">${osEscape(e.message)}</div>`;
+    toast('Erro: '+e.message,'error');
+  }
+}
+async function osReabrir(){
+  const o=_osDetailAtual; if(!o) return;
+  const errBox=document.getElementById('osDetailError'); if(errBox) errBox.innerHTML='';
+  try{
+    const r=await syncToGS('reabrirOS',{id_os:o.id_os});
+    _osDetailAtual=r.os;
+    toast('OS reaberta');
+    await osRenderDetail();
+    loadOSList();
+  }catch(e){
+    if(errBox) errBox.innerHTML=`<div class="info-box" style="color:var(--danger)">${osEscape(e.message)}</div>`;
+    toast('Erro: '+e.message,'error');
+  }
+}
+
+async function osOpenVincularMaquina(){
+  const o=_osDetailAtual; if(!o) return;
+  const machines=(db.machines||[]).filter(m=>!o.id_cliente || String(m.id_cliente||'')===String(o.id_cliente) || String(m.client||'').toLowerCase().trim()===String(o.cliente||'').toLowerCase().trim());
+  const html=`<div class="overlay open" id="modalOSVincular"><div class="modal"><div class="modal-title">🔧 Vincular máquina à OS ${osEscape(o.numero_os)}</div>
+    <div id="osVincularError"></div>
+    <div style="max-height:260px;overflow:auto">${machines.length?machines.map(m=>`<label style="display:block;font-size:12px;margin:4px 0"><input type="radio" name="osVincMachine" value="${osEscape(m.id)}"> ${osEscape(m.client||'')} · ${osEscape(m.tag||m.serial||m.model||m.id)}</label>`).join(''):'<div style="font-size:12px;color:var(--text3)">Nenhuma máquina encontrada para este cliente.</div>'}</div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="document.getElementById('modalOSVincular').remove()">Cancelar</button>
+      <button class="btn btn-secondary" onclick="showView('machines')">Cadastrar nova máquina</button>
+      <button class="btn btn-primary" onclick="osConfirmarVincularMaquina()">Vincular</button>
+    </div>
+  </div></div>`;
   document.body.insertAdjacentHTML('beforeend', html);
+}
+async function osConfirmarVincularMaquina(){
+  const o=_osDetailAtual; if(!o) return;
+  const sel=document.querySelector('input[name="osVincMachine"]:checked');
+  const errBox=document.getElementById('osVincularError');
+  if(!sel) return toast('Selecione uma máquina','warning');
+  try{
+    await syncToGS('vincularMaquinaOS',{id_os:o.id_os, machineKey:sel.value, acao:'vincular'});
+    document.getElementById('modalOSVincular')?.remove();
+    toast('Máquina vinculada');
+    await osRenderDetail();
+    loadOSList();
+  }catch(e){
+    if(errBox) errBox.innerHTML=`<div class="info-box" style="color:var(--danger)">${osEscape(e.message)}</div>`;
+    toast('Erro ao vincular: '+e.message,'error');
+  }
+}
+async function osDesvincularMaquina(machineId){
+  const o=_osDetailAtual; if(!o) return;
+  if(!confirm('Desvincular esta máquina da OS?')) return;
+  try{
+    await syncToGS('vincularMaquinaOS',{id_os:o.id_os, machineKey:machineId, acao:'desvincular'});
+    toast('Máquina desvinculada');
+    await osRenderDetail();
+    loadOSList();
+  }catch(e){
+    toast('Erro ao desvincular: '+e.message,'error');
+  }
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -5980,25 +6223,58 @@ async function loadTecnicosConfig(){
 function renderTecnicosConfig(){
   const el=document.getElementById('tecnicosConfigBody'); if(!el) return;
   if(!_tecnicosConfigCache.length){ el.innerHTML='<div class="empty"><div class="empty-title">Nenhum técnico cadastrado</div></div>'; return; }
-  el.innerHTML=`<div class="table-wrap"><table class="mach-table"><thead><tr><th>ID</th><th>Nome</th><th>Status</th><th></th></tr></thead><tbody>${_tecnicosConfigCache.map(t=>`<tr><td>${osEscape(t.id)}</td><td>${osEscape(t.nome)}</td><td>${(t.ativo===false||t.ativo==='false')?'inativo':'ativo'}</td><td><button class="btn btn-secondary btn-sm" onclick="toggleTecnicoAtivo('${osEscape(t.id)}')">${(t.ativo===false||t.ativo==='false')?'Ativar':'Inativar'}</button></td></tr>`).join('')}</tbody></table></div>`;
+  el.innerHTML=`<div class="table-wrap"><table class="mach-table"><thead><tr><th>ID</th><th>Nome</th><th>Perfil</th><th>Contato</th><th>Último login</th><th>Status</th><th></th></tr></thead><tbody>${_tecnicosConfigCache.map(t=>{
+    const inativo=!isActivePCM_(t.ativo);
+    const contato=[t.telefone,t.email].filter(Boolean).join(' · ')||'—';
+    return `<tr><td>${osEscape(t.id)}</td><td>${osEscape(t.nome)}</td><td>${osEscape(t.perfil||'tecnico')}</td><td style="font-size:11px">${osEscape(contato)}</td><td style="font-size:11px">${osEscape((t.ultimo_login_at||'').replace('T',' ').slice(0,19)||'—')}</td><td>${inativo?'<span class="badge-sem">inativo</span>':'<span class="badge-ok">ativo</span>'}</td><td style="white-space:nowrap"><button class="btn btn-secondary btn-sm" onclick="openTecnicoModal('${osEscape(t.id)}')">Editar</button> <button class="btn btn-secondary btn-sm" onclick="toggleTecnicoAtivo('${osEscape(t.id)}')">${inativo?'Ativar':'Inativar'}</button></td></tr>`;
+  }).join('')}</tbody></table></div>`;
 }
-function openTecnicoModal(){
-  const html=`<div class="overlay open" id="modalTecnico"><div class="modal"><div class="modal-title">👷 Novo Técnico</div>
-    <div class="form-group"><label class="form-label">Nome</label><input class="form-input" id="tecNome" placeholder="Nome completo"></div>
-    <div class="form-group"><label class="form-label">PIN</label><input class="form-input" id="tecPin" type="password" placeholder="PIN (ex: 1234)" maxlength="8"></div>
-    <label style="font-size:13px"><input id="tecAtivo" type="checkbox" checked> Ativo</label>
-    <div class="modal-footer"><button class="btn btn-secondary" onclick="document.getElementById('modalTecnico').remove()">Cancelar</button><button class="btn btn-primary" onclick="saveTecnicoConfig()">Salvar</button></div>
+function isActivePCM_(v){
+  if(v===true) return true;
+  if(v===false) return false;
+  const s=String(v??'').trim().toUpperCase();
+  return s==='TRUE'||s==='SIM'||s==='1'||s==='ATIVO';
+}
+function openTecnicoModal(id){
+  const t=id?_tecnicosConfigCache.find(x=>String(x.id)===String(id)):null;
+  const html=`<div class="overlay open" id="modalTecnico"><div class="modal"><div class="modal-title">👷 ${t?'Editar técnico':'Novo técnico'}</div>
+    <div id="tecModalError"></div>
+    <div class="form-group"><label class="form-label">Nome</label><input class="form-input" id="tecNome" placeholder="Nome completo" value="${osEscape(t?.nome||'')}"></div>
+    <div class="form-row"><div class="form-group"><label class="form-label">Telefone</label><input class="form-input" id="tecTelefone" value="${osEscape(t?.telefone||'')}"></div>
+    <div class="form-group"><label class="form-label">E-mail</label><input class="form-input" id="tecEmail" value="${osEscape(t?.email||'')}"></div></div>
+    <div class="form-row"><div class="form-group"><label class="form-label">Perfil</label><select class="form-select" id="tecPerfil"><option value="tecnico" ${t?.perfil!=='supervisor'?'selected':''}>Técnico</option><option value="supervisor" ${t?.perfil==='supervisor'?'selected':''}>Supervisor</option></select></div>
+    <div class="form-group"><label class="form-label">${t?'Novo PIN (deixe em branco para manter)':'PIN'}</label><input class="form-input" id="tecPin" type="password" placeholder="${t?'••••':'PIN (ex: 1234)'}" maxlength="8"></div></div>
+    ${t?'':'<label style="font-size:13px"><input id="tecAtivo" type="checkbox" checked> Ativo</label>'}
+    <div class="modal-footer"><button class="btn btn-secondary" onclick="document.getElementById('modalTecnico').remove()">Cancelar</button><button class="btn btn-primary" onclick="saveTecnicoConfig('${osEscape(t?.id||'')}')">Salvar</button></div>
   </div></div>`;
   document.body.insertAdjacentHTML('beforeend', html);
 }
-async function saveTecnicoConfig(){
-  const nome=document.getElementById('tecNome')?.value.trim()||''; const pin=document.getElementById('tecPin')?.value||'';
-  if(!nome||!pin) return toast('Informe nome e PIN','warning');
-  try{ await syncToGS('saveTecnico',{nome,pin,ativo:document.getElementById('tecAtivo').checked}); document.getElementById('modalTecnico')?.remove(); toast('Técnico salvo'); loadTecnicosConfig(); }catch(e){ toast('Erro técnico: '+e.message,'error'); }
+async function saveTecnicoConfig(id){
+  const errBox=document.getElementById('tecModalError'); if(errBox) errBox.innerHTML='';
+  const nome=document.getElementById('tecNome')?.value.trim()||'';
+  const pin=document.getElementById('tecPin')?.value||'';
+  const telefone=document.getElementById('tecTelefone')?.value.trim()||'';
+  const email=document.getElementById('tecEmail')?.value.trim()||'';
+  const perfil=document.getElementById('tecPerfil')?.value||'tecnico';
+  if(!id && (!nome||!pin)) return toast('Informe nome e PIN','warning');
+  const payload={nome,telefone,email,perfil};
+  if(id) payload.id=id;
+  if(pin) payload.pin=pin;
+  if(!id) payload.ativo=document.getElementById('tecAtivo')?.checked!==false;
+  try{
+    await syncToGS('saveTecnico',payload);
+    document.getElementById('modalTecnico')?.remove();
+    toast(id?'Técnico atualizado':'Técnico cadastrado');
+    loadTecnicosConfig();
+  }catch(e){
+    if(errBox) errBox.innerHTML=`<div class="info-box" style="color:var(--danger)">${osEscape(e.message)}</div>`;
+    toast('Erro técnico: '+e.message,'error');
+  }
 }
 async function toggleTecnicoAtivo(id){
   const t=_tecnicosConfigCache.find(x=>String(x.id)===String(id)); if(!t) return;
-  try{ await syncToGS('saveTecnico',{id:t.id,nome:t.nome,ativo:(t.ativo===false||t.ativo==='false')}); toast('Status atualizado'); loadTecnicosConfig(); }catch(e){ toast('Erro técnico: '+e.message,'error'); }
+  const novoAtivo=!isActivePCM_(t.ativo);
+  try{ await syncToGS('saveTecnico',{id:t.id,nome:t.nome,ativo:novoAtivo}); toast(novoAtivo?'Técnico ativado':'Técnico inativado'); loadTecnicosConfig(); }catch(e){ toast('Erro técnico: '+e.message,'error'); }
 }
 
 function renderConfigStats(){
