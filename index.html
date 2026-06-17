@@ -576,6 +576,7 @@ tr:hover td{background:var(--gray-50)}
     </div>
     <div class="sidebar-list" id="sidebarList"></div>
     <div class="sidebar-footer">
+      <button class="btn btn-secondary" style="width:100%;margin-bottom:8px" onclick="openSubLibList()">📚 Biblioteca de Subsistemas</button>
       <button class="btn-new" id="sidebarNewBtn" onclick="openModalModel()">
         <svg width="12" height="12" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3"><path d="M12 5v14M5 12h14"/></svg>
         <span id="sidebarNewLabel">Novo modelo</span>
@@ -725,6 +726,47 @@ tr:hover td{background:var(--gray-50)}
       <button class="btn btn-secondary" onclick="closeModal('modalSub')">Cancelar</button>
       <button class="btn btn-primary" onclick="saveSub()">Salvar subsistema</button>
     </div>
+  </div>
+</div>
+
+
+<!-- Modal: Biblioteca de Subsistemas -->
+<div class="overlay" id="modalSubLibList">
+  <div class="modal modal-lg">
+    <div class="modal-title">📚 Biblioteca de Subsistemas</div>
+    <div class="sec-header">
+      <span class="sec-title">Subsistemas reutilizáveis independentes de modelo</span>
+      <button class="btn btn-primary btn-sm" onclick="openSubLibEditor()">+ Novo subsistema</button>
+    </div>
+    <div id="subLibListBody"></div>
+    <div class="modal-footer"><button class="btn btn-secondary" onclick="closeModal('modalSubLibList')">Fechar</button></div>
+  </div>
+</div>
+
+<div class="overlay" id="modalSubLib">
+  <div class="modal modal-lg">
+    <div class="modal-title">📚 <span id="modalSubLibTitle">Novo subsistema da biblioteca</span></div>
+    <div class="form-row">
+      <div class="form-group"><label class="form-label">Nome</label><input class="form-input" id="libSubName"></div>
+      <div class="form-group"><label class="form-label">Categoria</label><select class="form-select" id="libSubCategory"><option value="">Selecionar...</option><option>Unidade Compressora</option><option>Sistema de Lubrificação</option><option>Sistema de Resfriamento</option><option>Sistema de Controle</option><option>Quadro Elétrico / Motor</option><option>Sistema de Admissão e Filtração</option><option>Sistema Pneumático / Válvulas</option><option>Transmissão (correia/acoplamento)</option><option>Vedações e Juntas</option><option>Estrutura e Gabinete</option><option>Outro</option></select></div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label class="form-label">Código de referência</label><input class="form-input" id="libSubCodigo" placeholder="ex: E-12"></div>
+      <div class="form-group"><label class="form-label">Fabricante</label><input class="form-input" id="libSubFabricante"></div>
+      <div class="form-group"><label class="form-label">Intervalo base (h)</label><input class="form-input" type="number" id="libSubInterval"></div>
+    </div>
+    <div class="form-group"><label class="form-label">Descrição técnica</label><textarea class="form-textarea" id="libSubDesc"></textarea></div>
+    <div class="form-group"><label class="form-label">Obs</label><textarea class="form-textarea" id="libSubObs"></textarea></div>
+    <div class="modal-footer"><button class="btn btn-secondary" onclick="closeModal('modalSubLib')">Cancelar</button><button class="btn btn-primary" onclick="saveSubLib()">Salvar</button></div>
+  </div>
+</div>
+
+<div class="overlay" id="modalLinkSubLib">
+  <div class="modal modal-lg">
+    <div class="modal-title">🔗 Vincular subsistema da biblioteca</div>
+    <div class="form-group"><label class="form-label">Buscar</label><input class="form-input" id="linkSubLibSearch" oninput="renderLinkSubLibOptions()" placeholder="Nome, categoria, código..."></div>
+    <div id="linkSubLibOptions"></div>
+    <div class="modal-footer"><button class="btn btn-secondary" onclick="closeModal('modalLinkSubLib')">Cancelar</button></div>
   </div>
 </div>
 
@@ -1692,12 +1734,15 @@ let db = JSON.parse(localStorage.getItem('proper_admin_v2') || 'null') || {
 ensureSchemaVersion(db);
 // Etapa 0: rodar migrações pendentes (idempotente — só executa se necessário)
 runMigrations();
+db.subsistemasLib = db.subsistemasLib || [];
+db.modeloSubLinks = db.modeloSubLinks || [];
 
 // Pre-load clients from PGP data
 const PGP_CLIENTS = ["ENGETAP ENGENHARIA LTDA","LOCALIZA RENT A CAR SA","DAMMAPAC","STATUS IND. E COM. LTDA","SICREDI","SICOOB","RAIZEN","METALURGICA FERCAR LTDA","PRALUM DISTRIBUIDORA","MINERITA LOGISTICA","MOLDIMIG MACHARIA LTDA","PEMILL","NEO ESSENCI DESIGN","PH INTRALOGISTICA","METALURGICA AMAPA","METALURGICA METALMIG","METALFORMA","SORRAG DO BRASIL","TECHTO BRASIL","SILOE MANUTENCAO INDUSTRIAL","SAFOL","METALSIDER","METAMIL","FUNDIÇÃO CLAUDIENSE","BOMP","MARPE SERVICOS","METALLURGICA JANO","SICOOB CONFEDERACAO","MONADE MOVEIS","OFFICER INDUSTRIA QUIMICA","METALURGICA DRAGAO","PEDREIRA IRMAOS MACHADO","ARAMIG","METASAL","SENAI CETEF","MARANGONI - BECAPI","META X","ALUMINAS","BONOBO","UNIFENAS","USIMINAS","SIDERURGICA ATLAS","SUZANO","STELLANTIS"];
 
 let selModelId = db.models.length > 0 ? db.models[0].id : null;
 let editModelId=null, editSubModelId=null, editSubId=null;
+let editSubLibId=null, linkSubLibModelId=null;
 let addPartTarget=null, editPartTarget=null;
 let editMachineId=null, collapsedSubs={};
 let currentSims=[]; // temp similarity list for part modal
@@ -1706,7 +1751,7 @@ let sidebarTab='models'; // 'models'|'machines'
 let currentView='catalog';
 const ENABLE_PREVENTIVA = true;
 
-const _DEFAULT_GAS_URL='https://script.google.com/macros/s/AKfycbxpHeOZLkCzaqe_B4RQx47cZ7WOQzv7pPg0qB3VgtlHTRnQ6RpEwtu7E47pugBetQVSuw/exec';
+const _DEFAULT_GAS_URL='https://script.google.com/macros/s/AKfycbxYg2Cpoo-1SCzYiHi_Gmm9sKYmSDBG9OMubcn6yCicbRHPsn-lPl82Ltfy6om0M6Y/exec';
 let gsUrl=localStorage.getItem('proper_gs_url')||_DEFAULT_GAS_URL;
 let gsConnected=false;
 let _syncInProgress=false;
@@ -3273,8 +3318,10 @@ function renderCatalog(){
 
   const m=getModel(selModelId);
   const nDirect=(m.directParts||[]).length;
+  const linkedSubs=getLinkedSubsForModel(m.id);
   const nSubs=(m.subsystems||[]).length;
-  const nSubParts=(m.subsystems||[]).reduce((a,s)=>a+s.parts.length,0);
+  const nLinkedSubs=linkedSubs.length;
+  const nSubParts=(m.subsystems||[]).reduce((a,s)=>a+s.parts.length,0)+linkedSubs.reduce((a,s)=>a+(s.parts||[]).length,0);
   const nPhotos=(m.photos||[]).length;
   const machinesWithModel=db.machines.filter(eq=>modelKey(eq.brand,eq.model)===modelKey(m.brand,m.model));
 
@@ -3308,7 +3355,7 @@ function renderCatalog(){
 
     <div class="tab-bar">
       <button class="tab-btn active" id="tabDirect" onclick="switchTab('direct')">Peças diretas<span class="badge">${nDirect}</span></button>
-      <button class="tab-btn" id="tabSubs" onclick="switchTab('subs')">Subsistemas<span class="badge">${nSubs}</span></button>
+      <button class="tab-btn" id="tabSubs" onclick="switchTab('subs')">Subsistemas<span class="badge">${nSubs+nLinkedSubs}</span></button>
       <button class="tab-btn" id="tabPhotos" onclick="switchTab('photos')">Fotos<span class="badge">${nPhotos}</span></button>
     </div>
 
@@ -3327,10 +3374,11 @@ function renderCatalog(){
         <span class="sec-title">Subsistemas e conjuntos
           <i class="tooltip-icon" style="margin-left:4px" data-tip="Agrupamentos de peças por sistema funcional. Ex: Bloco Compressor, Sistema de Lubrificação, Quadro Elétrico.">?</i>
         </span>
-        <button class="btn btn-primary btn-sm" onclick="openAddSub('${m.id}')">+ Novo subsistema</button>
+        <div style="display:flex;gap:8px"><button class="btn btn-secondary btn-sm" onclick="openLinkSubLib('${m.id}')">🔗 Vincular subsistema da biblioteca</button><button class="btn btn-primary btn-sm" onclick="openAddSub('${m.id}')">+ Novo subsistema</button></div>
       </div>
       ${(m.subsystems||[]).map(s=>renderSubsystem(m.id,s)).join('')}
-      ${!nSubs?`<div class="empty"><div class="empty-icon">⊙</div><div class="empty-title">Nenhum subsistema</div><div class="empty-sub">Subsistemas organizam peças por conjunto funcional. Útil para modelos com muitas peças.</div></div>`:''}
+      ${linkedSubs.length?`<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text3);margin:14px 0 8px">Subsistemas vinculados da biblioteca</div>${linkedSubs.map(s=>renderLinkedSubsystem(m.id,s)).join('')}`:''}
+      ${!(nSubs+nLinkedSubs)?`<div class="empty"><div class="empty-icon">⊙</div><div class="empty-title">Nenhum subsistema</div><div class="empty-sub">Subsistemas organizam peças por conjunto funcional. Útil para modelos com muitas peças.</div></div>`:''}
     </div>
 
     <div id="panelPhotos" style="display:none">
@@ -3797,6 +3845,7 @@ function openAddPart(modelId,type,subId){
 }
 
 function openEditPart(modelId,type,subId,partId){
+  if(type==='lib') return openEditSubLibPart(modelId,partId);
   const m=getModel(modelId);
   let part;
   if(type==='direct') part=m.directParts.find(p=>p.id===partId);
@@ -3858,6 +3907,7 @@ function getLastAddedPart(modelId,type,subId){
 }
 
 function savePart(){
+  if(addPartTarget?.type==='lib' || editPartTarget?.type==='lib') return saveSubLibPartFromModal();
   const name=document.getElementById('pName').value.trim();
   if(!name){toast('Informe o nome da peça','error');return}
   const data={
@@ -3982,6 +4032,7 @@ function showCompatModal(ref, partName) {
 }
 
 function deletePart(modelId,type,subId,partId){
+  if(type==='lib') return deleteSubLibPartLocal(modelId,partId);
   if(!confirm('Excluir esta peça?')) return;
   const m=getModel(modelId);
   if(type==='direct') m.directParts=m.directParts.filter(p=>p.id!==partId);
@@ -4004,6 +4055,37 @@ function deletePart(modelId,type,subId,partId){
     await syncFullModelCatalogToGS(modelId);
   })();
 }
+
+
+function getLinkedSubsForModel(modelId){
+  return (db.modeloSubLinks||[]).filter(l=>String(l.modelId)===String(modelId)).map(l=>(db.subsistemasLib||[]).find(s=>String(s.id)===String(l.subLibId))).filter(Boolean);
+}
+function renderLinkedSubsystem(modelId,s){
+  const key='lib'+modelId+s.id, open=!collapsedSubs[key];
+  return `<div class="sub-block" style="border-color:var(--blue-mid)"><div class="sub-head" onclick="toggleSub('${key}')"><div class="sub-head-left"><div class="sub-icon">📚</div><span class="sub-name">${escHtml(s.name)}</span><span class="sub-type">📚 Da biblioteca</span>${s.category?`<span class="sub-type">${escHtml(s.category)}</span>`:''}<span class="sub-count">${(s.parts||[]).length} peça${(s.parts||[]).length!==1?'s':''}</span></div><div class="sub-actions" onclick="event.stopPropagation()"><button class="btn btn-danger btn-sm" onclick="unlinkSubLib('${modelId}','${s.id}')">Desvincular</button><span class="chevron ${open?'open':''}">▶</span></div></div><div class="sub-body" id="sb_${key}" style="${open?'':'display:none'}">${s.desc?`<div style="padding:7px 13px;font-size:11px;color:var(--text2);border-bottom:1px solid var(--border);background:var(--blue-pale)">${escHtml(s.desc)}</div>`:''}${renderSubLibPartsReadonly(s.parts||[])}</div></div>`;
+}
+function renderSubLibPartsReadonly(parts){
+  if(!parts.length) return `<div style="padding:20px;text-align:center;color:var(--text3);font-size:12px">Nenhuma peça cadastrada na biblioteca.</div>`;
+  return `<div class="table-wrap"><table><thead><tr><th>Peça</th><th>Ref.</th><th>Intervalo</th><th>Fornecedor</th><th>Obs</th></tr></thead><tbody>${parts.map(p=>`<tr><td><div class="td-name">${escHtml(p.name)}</div></td><td>${p.ref?`<span class="td-ref">${escHtml(p.ref)}</span>`:'—'}</td><td>${p.interval?p.interval+'h':'—'}</td><td>${escHtml(p.supplierPrimary||p.supplier||p.partBrand||'—')}</td><td style="font-size:11px;color:var(--text2)">${escHtml(p.obs||'')}</td></tr>`).join('')}</tbody></table></div>`;
+}
+function openSubLibList(){ renderSubLibList(); openModal('modalSubLibList'); }
+function renderSubLibList(){
+  const body=document.getElementById('subLibListBody'); if(!body) return;
+  const links=db.modeloSubLinks||[];
+  body.innerHTML=(db.subsistemasLib||[]).length?`<div class="table-wrap"><table><thead><tr><th>Nome</th><th>Categoria</th><th>Peças</th><th>Modelos vinculados</th><th></th></tr></thead><tbody>${db.subsistemasLib.map(s=>{const n=links.filter(l=>String(l.subLibId)===String(s.id)).length;return `<tr><td><div style="font-weight:600">${escHtml(s.name)}</div><div style="font-size:10px;color:var(--text3)">${escHtml(s.codigoReferencia||'')} ${escHtml(s.fabricante||'')}</div></td><td>${escHtml(s.category||'—')}</td><td>${(s.parts||[]).length}</td><td>${n}</td><td><div class="row-actions"><button class="btn btn-secondary btn-sm" onclick="openSubLibEditor('${s.id}')">Editar</button><button class="btn btn-primary btn-sm" onclick="openSubLibParts('${s.id}')">Ver peças</button><button class="btn btn-danger btn-sm" onclick="deleteSubLib('${s.id}')">Excluir</button></div></td></tr>`}).join('')}</tbody></table></div>`:`<div class="empty"><div class="empty-icon">📚</div><div class="empty-title">Biblioteca vazia</div><div class="empty-sub">Cadastre subsistemas independentes para reutilizar em vários modelos.</div></div>`;
+}
+function openSubLibEditor(id){ editSubLibId=id||null; const s=id?(db.subsistemasLib||[]).find(x=>String(x.id)===String(id)):{}; document.getElementById('modalSubLibTitle').textContent=id?'Editar subsistema da biblioteca':'Novo subsistema da biblioteca'; document.getElementById('libSubName').value=s?.name||''; document.getElementById('libSubCategory').value=s?.category||''; document.getElementById('libSubCodigo').value=s?.codigoReferencia||''; document.getElementById('libSubFabricante').value=s?.fabricante||''; document.getElementById('libSubInterval').value=s?.interval||''; document.getElementById('libSubDesc').value=s?.desc||''; document.getElementById('libSubObs').value=s?.obs||''; openModal('modalSubLib'); }
+async function saveSubLib(){ const name=document.getElementById('libSubName').value.trim(); if(!name){toast('Informe o nome','error');return;} const data={id:editSubLibId||uid(),name,categoria:document.getElementById('libSubCategory').value,category:document.getElementById('libSubCategory').value,desc:document.getElementById('libSubDesc').value.trim(),interval:parseInt(document.getElementById('libSubInterval').value)||0,codigoReferencia:document.getElementById('libSubCodigo').value.trim(),fabricante:document.getElementById('libSubFabricante').value.trim(),obs:document.getElementById('libSubObs').value.trim()}; const i=(db.subsistemasLib||[]).findIndex(s=>String(s.id)===String(data.id)); if(i>=0) db.subsistemasLib[i]={...db.subsistemasLib[i],...data}; else db.subsistemasLib.push({...data,parts:[]}); save(); closeModal('modalSubLib'); renderSubLibList(); await syncToGS('saveSubsistemaLib',{data}); toast('Subsistema da biblioteca salvo','success'); }
+function openSubLibParts(id){ const s=(db.subsistemasLib||[]).find(x=>String(x.id)===String(id)); if(!s) return; editSubLibId=id; document.getElementById('subLibListBody').innerHTML=`<div class="sec-header"><span class="sec-title">Peças — ${escHtml(s.name)}</span><button class="btn btn-primary btn-sm" onclick="openAddSubLibPart('${id}')">+ Peça</button></div>${renderPartsTable(s.parts||[],id,'lib',null)}<div style="margin-top:10px"><button class="btn btn-secondary btn-sm" onclick="renderSubLibList()">← Voltar</button></div>`; }
+function openAddSubLibPart(subLibId){ addPartTarget={modelId:subLibId,type:'lib',subId:null}; editPartTarget=null; currentSims=[]; document.getElementById('modalPartTitle').textContent='Nova peça da biblioteca'; ['pName','pRef','pObs','simRefInput','simBrandInput','pPartBrand','pSupplierPrimary','pSlot'].forEach(k=>{const el=document.getElementById(k); if(el) el.value=''}); document.getElementById('pQty').value=1; document.getElementById('pInterval').value=''; document.getElementById('pCost').value=''; document.getElementById('pCriticality').value='normal'; renderSimTags(); openModal('modalPart'); }
+function openEditSubLibPart(subLibId,partId){ const s=(db.subsistemasLib||[]).find(x=>String(x.id)===String(subLibId)); const part=s?.parts?.find(p=>String(p.id)===String(partId)); if(!part) return; editPartTarget={modelId:subLibId,type:'lib',partId}; addPartTarget=null; document.getElementById('modalPartTitle').textContent='Editar peça da biblioteca'; document.getElementById('pName').value=part.name||''; document.getElementById('pRef').value=part.ref||''; document.getElementById('pInterval').value=part.interval||''; document.getElementById('pQty').value=part.qty||1; document.getElementById('pPartBrand').value=part.partBrand||''; document.getElementById('pSupplierPrimary').value=part.supplierPrimary||''; document.getElementById('pCost').value=part.cost||''; document.getElementById('pCriticality').value=part.criticality||'normal'; document.getElementById('pObs').value=part.obs||''; document.getElementById('pSlot').value=part.slot||''; currentSims=[]; renderSimTags(); openModal('modalPart'); }
+async function saveSubLibPartFromModal(){ const target=editPartTarget||addPartTarget; const subLibId=target.modelId; const s=(db.subsistemasLib||[]).find(x=>String(x.id)===String(subLibId)); if(!s) return; const name=document.getElementById('pName').value.trim(); if(!name){toast('Informe o nome da peça','error');return;} const data={id:target.partId||uid(),subLibId,name,ref:document.getElementById('pRef').value.trim(),partBrand:document.getElementById('pPartBrand').value.trim(),supplierPrimary:document.getElementById('pSupplierPrimary').value.trim(),slot:document.getElementById('pSlot').value.trim(),qty:parseInt(document.getElementById('pQty').value)||1,interval:parseInt(document.getElementById('pInterval').value)||0,cost:parseFloat(document.getElementById('pCost').value)||0,criticality:document.getElementById('pCriticality').value,obs:document.getElementById('pObs').value.trim()}; const i=(s.parts||[]).findIndex(p=>String(p.id)===String(data.id)); if(i>=0) s.parts[i]=data; else {s.parts=s.parts||[]; s.parts.push(data);} save(); closeModal('modalPart'); openSubLibParts(subLibId); await syncToGS('saveSubLibPart',{data}); toast('Peça da biblioteca salva','success'); }
+async function deleteSubLibPartLocal(subLibId,partId){ if(!confirm('Excluir esta peça da biblioteca?')) return; const s=(db.subsistemasLib||[]).find(x=>String(x.id)===String(subLibId)); if(!s) return; s.parts=(s.parts||[]).filter(p=>String(p.id)!==String(partId)); save(); openSubLibParts(subLibId); await syncToGS('deleteSubLibPart',{partId,deletedBy:'admin'}); toast('Peça excluída da biblioteca','success'); }
+async function deleteSubLib(id){ const n=(db.modeloSubLinks||[]).filter(l=>String(l.subLibId)===String(id)).length; if(n){toast('Subsistema vinculado a pelo menos um modelo. Desvincule antes de excluir.','error');return;} if(!confirm('Excluir subsistema da biblioteca?')) return; db.subsistemasLib=(db.subsistemasLib||[]).filter(s=>String(s.id)!==String(id)); save(); renderSubLibList(); const r=await syncToGS('deleteSubsistemaLib',{subLibId:id,deletedBy:'admin'}); if(r?.status==='error') toast(r.error,'error'); else toast('Subsistema excluído da biblioteca','success'); }
+function openLinkSubLib(modelId){ linkSubLibModelId=modelId; document.getElementById('linkSubLibSearch').value=''; renderLinkSubLibOptions(); openModal('modalLinkSubLib'); }
+function renderLinkSubLibOptions(){ const q=normText(document.getElementById('linkSubLibSearch')?.value||''); const linked=new Set((db.modeloSubLinks||[]).filter(l=>String(l.modelId)===String(linkSubLibModelId)).map(l=>String(l.subLibId))); const arr=(db.subsistemasLib||[]).filter(s=>!linked.has(String(s.id))).filter(s=>!q||normText([s.name,s.category,s.codigoReferencia,s.fabricante].join(' ')).includes(q)); document.getElementById('linkSubLibOptions').innerHTML=arr.length?arr.map(s=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:10px;border:1px solid var(--border);border-radius:var(--radius);margin-bottom:8px"><div><div style="font-weight:700">${escHtml(s.name)}</div><div style="font-size:11px;color:var(--text3)">${escHtml(s.category||'')} · ${(s.parts||[]).length} peças</div></div><button class="btn btn-primary btn-sm" onclick="linkSubLib('${s.id}')">Vincular</button></div>`).join(''):`<div class="empty"><div class="empty-title">Nenhum subsistema disponível</div></div>`; }
+async function linkSubLib(subLibId){ const id=uid(); db.modeloSubLinks.push({id,modelId:linkSubLibModelId,subLibId}); save(); closeModal('modalLinkSubLib'); renderCatalog(); switchTab('subs'); const r=await syncToGS('linkSubsistemaToModel',{modelId:linkSubLibModelId,subLibId,createdBy:'admin'}); if(r?.status==='error') toast(r.error,'error'); else toast('Subsistema vinculado','success'); }
+async function unlinkSubLib(modelId,subLibId){ if(!confirm('Desvincular este subsistema do modelo?')) return; db.modeloSubLinks=(db.modeloSubLinks||[]).filter(l=>!(String(l.modelId)===String(modelId)&&String(l.subLibId)===String(subLibId))); save(); renderCatalog(); switchTab('subs'); await syncToGS('unlinkSubsistemaFromModel',{modelId,subLibId,deletedBy:'admin'}); toast('Subsistema desvinculado','success'); }
 
 // ═══════════════════════════════════════════════════════════
 // MACHINES VIEW
@@ -6139,6 +6221,9 @@ async function syncCatalogFromGS(gsGet){
     const modelsRows = result.models || [];
     const partsRows = result.parts || [];
     const simRows = result.similarities || [];
+    const subLibRows = result.subsistemasLib || [];
+    const subLibPartRows = result.subLibParts || [];
+    const modeloSubLinkRows = result.modeloSubLinks || [];
     const norm=(v)=>String(v||'').trim().toLowerCase();
     const stableSubId=(name)=>'sub-'+normText(name||'').slice(0,30);
     const modelById = new Map((db.models||[]).map(m=>[String(m.id), m]));
@@ -6195,6 +6280,22 @@ async function syncCatalogFromGS(gsGet){
     const groups=new Map();
     for(const row of simRows){ if(String(row.Ativo||'').trim().toUpperCase()==='NÃO') continue; const ref=String(row.Ref_Similar||'').trim(); if(!ref) continue; const k=`${String(row.Part_ID||'').trim()}::${String(row.Model_ID||'').trim()}`; if(!groups.has(k)) groups.set(k,[]); groups.get(k).push({ref,brand:row.Brand_Similar||'',obs:row.Obs||''}); }
     for(const [key,sims] of groups){ const [partId,modelId]=key.split('::'); const m=(db.models||[]).find(x=>String(x.id)===modelId); const p=m?findPartInModel(m,partId):null; if(p) p.similarities=sims; }
+
+    const libById=new Map();
+    db.subsistemasLib=[];
+    for(const row of subLibRows){
+      if(String(row.Ativo||'').trim().toUpperCase()==='NÃO') continue;
+      const id=String(row.Sub_Lib_ID||'').trim(); if(!id) continue;
+      const sub={id,name:row.Nome||'',category:row.Categoria||'',desc:row.Descricao||'',interval:parseInt(row.Interval_Base_H)||0,codigoReferencia:row.Codigo_Referencia||'',fabricante:row.Fabricante||'',obs:row.Obs||'',parts:[]};
+      libById.set(id,sub); db.subsistemasLib.push(sub);
+    }
+    for(const row of subLibPartRows){
+      if(String(row.Ativo||'').trim().toUpperCase()==='NÃO') continue;
+      const sub=libById.get(String(row.Sub_Lib_ID||'').trim()); if(!sub) continue;
+      sub.parts.push({id:String(row.Part_ID||'').trim(),name:row.Name||'',ref:row.OEM_Ref||'',partBrand:row.Part_Brand||'',supplierPrimary:row.Supplier_Primary||'',slot:row.Slot||'',qty:parseInt(row.Qty_Default)||1,interval:parseInt(row.Interval_H)||0,criticality:row.Criticality||'normal',cost:parseFloat(row.Cost)||0,obs:row.Obs||'',similarities:[]});
+    }
+    db.modeloSubLinks=modeloSubLinkRows.filter(r=>String(r.Ativo||'').trim().toUpperCase()!=='NÃO').map(r=>({id:String(r.Link_ID||'').trim(),modelId:String(r.Model_ID||'').trim(),subLibId:String(r.Sub_Lib_ID||'').trim()})).filter(l=>l.modelId&&l.subLibId);
+
   }catch(err){ console.warn('syncCatalogFromGS falhou:', err); }
 }
 
