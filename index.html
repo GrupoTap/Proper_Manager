@@ -1069,12 +1069,14 @@ tr:hover td{background:var(--gray-50)}
       <button class="mdet-tab" data-tab="pecas" onclick="switchMdetTab('pecas')">🔧 Peças <span id="mdetPecasBadge"></span></button>
       <button class="mdet-tab" data-tab="fotos" onclick="switchMdetTab('fotos')">📷 Fotos</button>
       <button class="mdet-tab" data-tab="preventivas" onclick="switchMdetTab('preventivas')" id="mdetTabPreventivas">🔧 Preventivas</button>
+      <button class="mdet-tab" data-tab="rotores" onclick="switchMdetTab('rotores')">⚙ Rotores</button>
     </div>
     <div id="modalMachinePartsBody" style="max-height:62vh;overflow-y:auto">
       <div class="mdet-panel active" id="mdetResumo"></div>
       <div class="mdet-panel" id="mdetPecas"></div>
       <div class="mdet-panel" id="mdetFotos"></div>
       <div class="mdet-panel" id="mdetPreventivas"></div>
+      <div class="mdet-panel" id="mdetRotores"></div>
     </div>
     <div class="modal-footer">
       <button class="btn btn-secondary" onclick="closeModal('modalMachineParts')">Fechar</button>
@@ -1790,6 +1792,7 @@ ensureSchemaVersion(db);
 runMigrations();
 db.subsistemasLib = db.subsistemasLib || [];
 db.modeloSubLinks = db.modeloSubLinks || [];
+db.rotorModels    = db.rotorModels    || [];
 
 // Pre-load clients from PGP data
 const PGP_CLIENTS = ["ENGETAP ENGENHARIA LTDA","LOCALIZA RENT A CAR SA","DAMMAPAC","STATUS IND. E COM. LTDA","SICREDI","SICOOB","RAIZEN","METALURGICA FERCAR LTDA","PRALUM DISTRIBUIDORA","MINERITA LOGISTICA","MOLDIMIG MACHARIA LTDA","PEMILL","NEO ESSENCI DESIGN","PH INTRALOGISTICA","METALURGICA AMAPA","METALURGICA METALMIG","METALFORMA","SORRAG DO BRASIL","TECHTO BRASIL","SILOE MANUTENCAO INDUSTRIAL","SAFOL","METALSIDER","METAMIL","FUNDIÇÃO CLAUDIENSE","BOMP","MARPE SERVICOS","METALLURGICA JANO","SICOOB CONFEDERACAO","MONADE MOVEIS","OFFICER INDUSTRIA QUIMICA","METALURGICA DRAGAO","PEDREIRA IRMAOS MACHADO","ARAMIG","METASAL","SENAI CETEF","MARANGONI - BECAPI","META X","ALUMINAS","BONOBO","UNIFENAS","USIMINAS","SIDERURGICA ATLAS","SUZANO","STELLANTIS"];
@@ -4512,6 +4515,7 @@ function switchMdetTab(tab){
   if(panel) panel.classList.add('active');
   document.getElementById('mdetSaveBtn').style.display = tab==='pecas'?'':'none';
   if(tab==='preventivas') renderMdetPreventivas();
+  if(tab==='rotores') carregarColetasRotores(_mdetMachineId);
 }
 
 function openMachineDetail(id){
@@ -5187,6 +5191,154 @@ function saveMachineParts(){
 }
 
 function openMachineDetail_OLD(id){ /* aposentada */ }
+
+// ═══════════════════════════════════════════════════════════
+// ROTORES — Coletas e Ficha
+// ═══════════════════════════════════════════════════════════
+async function carregarColetasRotores(machineId){
+  const panel = document.getElementById('mdetRotores');
+  if(!panel) return;
+  const eq = db.machines.find(m=>m.id===machineId);
+  if(!eq){ panel.innerHTML='<p style="padding:12px;color:#888">Máquina não encontrada.</p>'; return; }
+
+  panel.innerHTML = '<p style="padding:12px;color:#888;font-size:13px">Carregando coletas...</p>';
+
+  const fichaBaseUrl = localStorage.getItem('proper_ficha_url') || '';
+  const params = new URLSearchParams({
+    machine_id:   eq.id   || '',
+    machine_name: (eq.brand||'') + ' ' + (eq.model||''),
+    client:       eq.client || '',
+    brand:        eq.brand  || '',
+    model:        eq.model  || '',
+    serial:       eq.serial || '',
+    tag:          eq.tag    || ''
+  });
+  const fichaUrl = fichaBaseUrl ? fichaBaseUrl + '?' + params.toString() : '';
+
+  let coletas = [];
+  try{
+    const res = await gsGet('getRotorColetas', { machine_id: machineId });
+    if(res.status==='ok') coletas = res.coletas || [];
+  }catch(e){ console.warn('getRotorColetas falhou:', e); }
+
+  let h = '<div style="padding:12px">';
+  h += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">';
+  h += '<span style="font-size:13px;font-weight:700;color:var(--blue-mid)">Ficha de Rotores</span>';
+  if(fichaUrl){
+    h += '<a href="'+fichaUrl+'" target="_blank" style="font-size:12px;background:#C0392B;color:#fff;padding:6px 12px;border-radius:6px;text-decoration:none;font-weight:600">&#9881; Abrir Ficha</a>';
+  } else {
+    h += '<button class="btn btn-secondary" style="font-size:11px" onclick="configurarFichaUrl()">Configurar URL da Ficha</button>';
+  }
+  h += '</div>';
+
+  // Rotor model template badge
+  const modelKey2 = normText((eq.brand||'')+(eq.model||''));
+  const rotorTpl = (db.rotorModels||[]).find(r => normText((r.marca||'')+(r.modelo||'')) === modelKey2);
+  if(rotorTpl){
+    h += '<div style="background:#e8f5e9;border:1px solid #a5d6a7;border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:12px">';
+    h += '<span style="color:#2e7d32;font-weight:700">&#10003; Template cadastrado:</span> ';
+    h += (rotorTpl.marca||'') + ' ' + (rotorTpl.modelo||'');
+    h += ' <span style="color:#555;font-size:10px">(atualizado: '+(rotorTpl.updated_at||'—')+')</span>';
+    h += '</div>';
+  }
+
+  if(!coletas.length){
+    h += '<p style="color:#888;font-size:12px">Nenhuma coleta registrada para esta máquina.</p>';
+  } else {
+    h += '<div style="display:flex;flex-direction:column;gap:8px">';
+    coletas.forEach(function(c){
+      h += '<div style="border:1px solid #e0e0e0;border-radius:8px;padding:10px;background:#fafafa">';
+      h += '<div style="display:flex;justify-content:space-between;align-items:flex-start">';
+      h += '<div>';
+      h += '<span style="font-size:12px;font-weight:700;color:#333">'+(c['Data_Coleta']||c.Data_Coleta||'—')+'</span>';
+      h += ' <span style="font-size:11px;color:#666">por '+(c['Tecnico']||c.Tecnico||'—')+'</span>';
+      h += '</div>';
+      const cid = c['Coleta_ID']||c.Coleta_ID||'';
+      h += '<button class="btn btn-secondary" style="font-size:10px;padding:3px 8px" onclick="verMedicoesRotores(\''+cid+'\')">Ver medições</button>';
+      h += '</div>';
+      if(c['Obs']||c.Obs){ h += '<div style="font-size:11px;color:#555;margin-top:4px">'+(c['Obs']||c.Obs)+'</div>'; }
+      if(c['Foto_Rotores_URL']||c.Foto_Rotores_URL){
+        h += '<div style="margin-top:6px"><a href="'+(c['Foto_Rotores_URL']||c.Foto_Rotores_URL)+'" target="_blank" style="font-size:11px;color:var(--blue-mid)">&#128247; Ver foto</a></div>';
+      }
+      h += '</div>';
+    });
+    h += '</div>';
+  }
+  h += '</div>';
+  panel.innerHTML = h;
+
+  // Store coletas in closure for verMedicoesRotores
+  window._rotorColetasCache = window._rotorColetasCache || {};
+  window._rotorColetasCache[machineId] = coletas;
+}
+
+function verMedicoesRotores(coletaId){
+  const allCaches = window._rotorColetasCache || {};
+  let coleta = null;
+  Object.values(allCaches).forEach(arr => {
+    const found = arr.find(c => (c['Coleta_ID']||c.Coleta_ID) === coletaId);
+    if(found) coleta = found;
+  });
+  if(!coleta){ toast('Coleta não encontrada','error'); return; }
+
+  let meds = {};
+  try{ meds = JSON.parse(coleta['Medicoes_JSON']||coleta.Medicoes_JSON||'{}'); }catch(e){}
+
+  let h = '<div style="font-size:12px;padding:4px 0"><b>Coleta:</b> '+coletaId+'<br>';
+  h += '<b>Data:</b> '+(coleta['Data_Coleta']||coleta.Data_Coleta||'—')+'<br>';
+  h += '<b>Técnico:</b> '+(coleta['Tecnico']||coleta.Tecnico||'—')+'</div>';
+  h += '<table style="width:100%;border-collapse:collapse;margin-top:8px;font-size:12px">';
+  h += '<tr style="background:#f5f5f5"><th style="text-align:left;padding:4px 8px;border-bottom:1px solid #ddd">Ponto</th><th style="text-align:left;padding:4px 8px;border-bottom:1px solid #ddd">Valores</th></tr>';
+  Object.keys(meds).sort((a,b)=>parseInt(a)-parseInt(b)).forEach(function(pt){
+    const vals = meds[pt];
+    if(!vals || !Object.keys(vals).length) return;
+    h += '<tr><td style="padding:4px 8px;border-bottom:1px solid #eee;font-weight:600">Ponto '+pt+'</td><td style="padding:4px 8px;border-bottom:1px solid #eee">';
+    Object.keys(vals).forEach(function(k){ if(vals[k]) h += k+': <b>'+vals[k]+'</b>  '; });
+    h += '</td></tr>';
+  });
+  h += '</table>';
+  if(coleta['Obs']||coleta.Obs) h += '<div style="margin-top:8px;font-size:12px;color:#555"><b>Obs:</b> '+(coleta['Obs']||coleta.Obs)+'</div>';
+
+  // Use a simple alert-style panel inside mdetRotores
+  const panel = document.getElementById('mdetRotores');
+  if(panel){
+    const detail = document.createElement('div');
+    detail.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:500;display:flex;align-items:center;justify-content:center';
+    detail.innerHTML = '<div style="background:#fff;border-radius:12px;padding:20px;width:90%;max-width:600px;max-height:80vh;overflow-y:auto">'
+      + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">'
+      + '<span style="font-size:14px;font-weight:700">Medições — '+coletaId+'</span>'
+      + '<button onclick="this.closest(\'[style*=fixed]\').remove()" style="background:none;border:none;font-size:18px;cursor:pointer">✕</button>'
+      + '</div>' + h + '</div>';
+    document.body.appendChild(detail);
+  }
+}
+
+function abrirFichaRotores(machineId){
+  const fichaBaseUrl = localStorage.getItem('proper_ficha_url') || '';
+  if(!fichaBaseUrl){ configurarFichaUrl(); return; }
+  const eq = db.machines.find(m=>m.id===machineId);
+  if(!eq) return;
+  const params = new URLSearchParams({
+    machine_id:   eq.id || '',
+    machine_name: (eq.brand||'') + ' ' + (eq.model||''),
+    client:       eq.client || '',
+    brand:        eq.brand  || '',
+    model:        eq.model  || '',
+    serial:       eq.serial || '',
+    tag:          eq.tag    || ''
+  });
+  window.open(fichaBaseUrl + '?' + params.toString(), '_blank');
+}
+
+function configurarFichaUrl(){
+  const current = localStorage.getItem('proper_ficha_url') || '';
+  const novo = prompt('URL da Ficha de Rotores (proper_ficha_rotores_v8.html):', current);
+  if(novo !== null){
+    localStorage.setItem('proper_ficha_url', novo.trim());
+    toast('URL da ficha salva','success');
+    if(_mdetMachineId) carregarColetasRotores(_mdetMachineId);
+  }
+}
 
 // ═══════════════════════════════════════════════════════════
 // PROMOVER MÁQUINA AO CATÁLOGO
@@ -6462,6 +6614,33 @@ async function syncFromGS({ silent = false } = {}){
     });
 
     await syncCatalogFromGS(gsGet);
+
+    // Sync ROTORES_MODELOS
+    try {
+      const dr = await gsGet('getRotorModels');
+      if (dr.status === 'ok') {
+        if (!db.rotorModels) db.rotorModels = [];
+        (dr.rotorModels || []).forEach(rm => {
+          const mid = String(rm.Model_ID || '').trim();
+          if (!mid) return;
+          const existing = db.rotorModels.find(r => r.model_id === mid);
+          if (existing) {
+            if (rm.Anchors_JSON) existing.anchors_json = rm.Anchors_JSON;
+            if (rm.Foto_Ref_URL) existing.foto_ref_url = rm.Foto_Ref_URL;
+            if (rm.Updated_At)   existing.updated_at   = rm.Updated_At;
+          } else {
+            db.rotorModels.push({
+              model_id:     mid,
+              marca:        rm.Marca        || '',
+              modelo:       rm.Modelo       || '',
+              foto_ref_url: rm.Foto_Ref_URL || '',
+              anchors_json: rm.Anchors_JSON || '',
+              updated_at:   rm.Updated_At   || ''
+            });
+          }
+        });
+      }
+    } catch(eRot) { console.warn('sync rotorModels falhou:', eRot); }
 
     let updMachines=0, newMachines=0, updParts=0, visitReconciled=0, visitCreated=0;
 
